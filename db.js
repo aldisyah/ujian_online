@@ -175,8 +175,21 @@ async function getAllResults() {
 }
 
 async function clearAllResults() {
-  if (isFirebaseEnabled()) return clearAllResultsFirebase();
-  return clearAllResultsIndexedDB();
+  // Ensure we clear results both locally and remotely to avoid re-sync
+  const tasks = [];
+  try {
+    tasks.push(clearAllResultsIndexedDB());
+  } catch (e) {
+    console.warn('clearAllResults: failed to clear IndexedDB', e);
+  }
+  if (isFirebaseEnabled()) {
+    try {
+      tasks.push(clearAllResultsFirebase());
+    } catch (e) {
+      console.warn('clearAllResults: failed to clear Firebase', e);
+    }
+  }
+  return Promise.all(tasks);
 }
 
 async function getRankingData(subject = null) {
