@@ -352,6 +352,9 @@ async function loadRankingSubjectFilter() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  // Protect page - must be logged in
+  protectAdminPage();
+
   const fileInput = document.getElementById('fileInput');
   const subjectInput = document.getElementById('subjectInput');
   const fileDisplay = document.getElementById('file-name-display');
@@ -363,6 +366,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const filterSubject = document.getElementById('filterSubject');
   const menuItems = document.querySelectorAll('.menu-item[data-target]');
   const tabPanes = document.querySelectorAll('.tab-pane');
+  const logoutBtn = document.getElementById('logoutBtn');
+
+  // Logout functionality
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (confirm('Apakah Anda yakin ingin logout?')) {
+        logoutAdmin();
+        window.location.href = 'admin-login.html';
+      }
+    });
+  }
 
   // Tab Switching Logic
   menuItems.forEach(menu => {

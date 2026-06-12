@@ -8,6 +8,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <script src="https://unpkg.com/mammoth@1.4.2/mammoth.browser.min.js"></script>
+  <script src="auth.js" defer></script>
   <script src="db.js" defer></script>
   <script src="admin.js" defer></script>
 </head>
@@ -41,7 +42,12 @@
   <div class="content-wrapper">
     <nav class="main-header">
       <div class="header-title">🌟 Olimpiade Annur CBT</div>
-      <div class="header-user">👨‍💼 Administrator</div>
+      <div class="header-user">
+        <span>👨‍💼 Administrator</span>
+        <button id="logoutBtn" class="btn btn-logout" title="Logout">
+          <i class="fas fa-sign-out-alt"></i> Logout
+        </button>
+      </div>
     </nav>
 
     <section class="content">

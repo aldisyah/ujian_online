@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login Admin - Olimpiade Annur</title>
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <style>
+    .login-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      position: relative;
+    }
+
+    .login-card {
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 3rem 2rem;
+      width: 100%;
+      max-width: 420px;
+      animation: slideUp 0.6s ease-out;
+    }
+
+    @keyframes slideUp {
+      from {
+        transform: translateY(50px);
+        opacity: 0;
+      }
+      to {
+        transform: translateY(0);
+        opacity: 1;
+      }
+    }
+
+    .login-header {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .login-logo {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+    }
+
+    .login-title {
+      font-size: 1.8rem;
+      font-weight: 900;
+      color: #1F2937;
+      margin: 0.5rem 0;
+    }
+
+    .login-subtitle {
+      font-size: 0.9rem;
+      color: #6B7280;
+      margin-top: 0.5rem;
+    }
+
+    .login-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .form-group label {
+      font-weight: 700;
+      color: #374151;
+      font-size: 0.95rem;
+    }
+
+    .form-group input {
+      padding: 0.75rem 1rem;
+      border: 2px solid #E5E7EB;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-family: inherit;
+      transition: all 0.3s ease;
+      background: #F9FAFB;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: #667eea;
+      background: white;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .form-group input::placeholder {
+      color: #9CA3AF;
+    }
+
+    .remember-me {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.9rem;
+      color: #6B7280;
+      margin-top: 0.5rem;
+    }
+
+    .remember-me input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+      accent-color: #667eea;
+    }
+
+    .remember-me label {
+      cursor: pointer;
+      margin: 0;
+      font-weight: 400;
+    }
+
+    .btn-login {
+      padding: 0.9rem 1.5rem;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      margin-top: 0.5rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .btn-login:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+    }
+
+    .btn-login:active {
+      transform: translateY(0);
+    }
+
+    .btn-login:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .login-error {
+      display: none;
+      background: #FEE2E2;
+      color: #991B1B;
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      border-left: 4px solid #EF4444;
+      margin-bottom: 1rem;
+      animation: shake 0.3s ease;
+    }
+
+    .login-error.show {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-5px); }
+      75% { transform: translateX(5px); }
+    }
+
+    .login-info {
+      background: #DBEAFE;
+      color: #1E40AF;
+      padding: 1rem;
+      border-radius: 10px;
+      font-size: 0.85rem;
+      border-left: 4px solid #3B82F6;
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+
+    .login-footer {
+      text-align: center;
+      margin-top: 1.5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid #E5E7EB;
+      font-size: 0.85rem;
+      color: #6B7280;
+    }
+
+    .login-footer a {
+      color: #667eea;
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .login-footer a:hover {
+      text-decoration: underline;
+    }
+
+    .spinner {
+      display: inline-block;
+      width: 1rem;
+      height: 1rem;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      margin-right: 0.5rem;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body class="admin-login">
+  <div class="login-container">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="login-logo">👨‍💼</div>
+        <h1 class="login-title">Login Admin</h1>
+        <p class="login-subtitle">Dashboard Olimpiade Annur</p>
+      </div>
+
+      <div class="login-info">
+        <strong>📌 Kredensial Demo:</strong><br>
+        Username: admin<br>
+        Password: admin123
+      </div>
+
+      <form id="loginForm" class="login-form">
+        <div id="loginError" class="login-error">
+          <i class="fas fa-exclamation-circle"></i>
+          <span id="errorMessage"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="username">Username</label>
+          <input 
+            type="text" 
+            id="username" 
+            placeholder="Masukkan username" 
+            required 
+            autocomplete="username"
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input 
+            type="password" 
+            id="password" 
+            placeholder="Masukkan password" 
+            required 
+            autocomplete="current-password"
+          />
+        </div>
+
+        <div class="remember-me">
+          <input type="checkbox" id="rememberMe" />
+          <label for="rememberMe">Ingat saya</label>
+        </div>
+
+        <button type="submit" id="loginBtn" class="btn-login">
+          Login
+        </button>
+      </form>
+
+      <div class="login-footer">
+        <p>🔒 Halaman ini diakses oleh Administrator</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="auth.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // Check if already logged in
+      if (isAdminLoggedIn()) {
+        window.location.href = 'admin.html';
+        return;
+      }
+
+      const loginForm = document.getElementById('loginForm');
+      const loginBtn = document.getElementById('loginBtn');
+      const loginError = document.getElementById('loginError');
+      const errorMessage = document.getElementById('errorMessage');
+      const usernameInput = document.getElementById('username');
+      const passwordInput = document.getElementById('password');
+      const rememberMe = document.getElementById('rememberMe');
+
+      // Check if there's a saved username
+      const savedUsername = localStorage.getItem('admin_remembered_username');
+      if (savedUsername) {
+        usernameInput.value = savedUsername;
+        rememberMe.checked = true;
+      }
+
+      loginForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const username = usernameInput.value.trim();
+        const password = passwordInput.value;
+
+        if (!username || !password) {
+          showError('Silakan isi username dan password');
+          return;
+        }
+
+        loginBtn.disabled = true;
+        loginBtn.innerHTML = '<span class="spinner"></span>Sedang login...';
+        loginError.classList.remove('show');
+
+        // Simulate network delay
+        await new Promise(resolve => setTimeout(resolve, 800));
+
+        if (loginAdmin(username, password)) {
+          // Save username if remember me is checked
+          if (rememberMe.checked) {
+            localStorage.setItem('admin_remembered_username', username);
+          } else {
+            localStorage.removeItem('admin_remembered_username');
+          }
+          
+          loginError.classList.remove('show');
+          window.location.href = 'admin.html';
+        } else {
+          showError('Username atau password salah!');
+          passwordInput.value = '';
+          passwordInput.focus();
+          loginBtn.disabled = false;
+          loginBtn.innerHTML = 'Login';
+        }
+      });
+
+      function showError(message) {
+        errorMessage.textContent = message;
+        loginError.classList.add('show');
+      }
+    });
+  </script>
+</body>
+</html>
