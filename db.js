@@ -114,13 +114,39 @@ async function saveExamData(subject, questions, answers) {
 }
 
 async function clearSubjectData(subject) {
-  if (isFirebaseEnabled()) return clearSubjectDataFirebase(subject);
-  return clearSubjectDataIndexedDB(subject);
+  // Ensure deletion occurs both locally and remotely to avoid re-syncing local copies
+  const tasks = [];
+  try {
+    tasks.push(clearSubjectDataIndexedDB(subject));
+  } catch (e) {
+    console.warn('clearSubjectData: failed to clear IndexedDB', e);
+  }
+  if (isFirebaseEnabled()) {
+    try {
+      tasks.push(clearSubjectDataFirebase(subject));
+    } catch (e) {
+      console.warn('clearSubjectData: failed to clear Firebase', e);
+    }
+  }
+  return Promise.all(tasks);
 }
 
 async function clearExamData() {
-  if (isFirebaseEnabled()) return clearExamDataFirebase();
-  return clearExamDataIndexedDB();
+  // Delete all exam data both locally and remotely to avoid re-sync
+  const tasks = [];
+  try {
+    tasks.push(clearExamDataIndexedDB());
+  } catch (e) {
+    console.warn('clearExamData: failed to clear IndexedDB', e);
+  }
+  if (isFirebaseEnabled()) {
+    try {
+      tasks.push(clearExamDataFirebase());
+    } catch (e) {
+      console.warn('clearExamData: failed to clear Firebase', e);
+    }
+  }
+  return Promise.all(tasks);
 }
 
 async function getAvailableSubjects() {
