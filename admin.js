@@ -543,6 +543,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (clearResultsBtn) {
     clearResultsBtn.addEventListener('click', async () => {
       if (confirm('Apakah Anda yakin ingin menghapus semua data hasil pengerjaan siswa?')) {
+        // mark cleared time so sync won't re-upload older local entries
+        try { localStorage.setItem('cleared_results_at', Date.now().toString()); } catch (e) { /* ignore */ }
         await clearAllResults();
         loadResultsTable();
       }

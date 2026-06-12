@@ -81,10 +81,13 @@ async function syncLocalToFirebase() {
       const ans = await getCorrectAnswersIndexedDB(subj);
       await saveExamDataFirebase(subj, qs, ans);
     }
-    // Also upload results if any
+    // Also upload results if any, but skip those created before the last admin clear
+    const clearedAt = parseInt(localStorage.getItem('cleared_results_at') || '0', 10);
     const localResults = await getAllResultsIndexedDB();
     for (const r of localResults) {
-      await saveStudentResultFirebase(r.name, r.subject, r.answers, r.score, r.total);
+      // if admin recently cleared results, skip uploading older entries
+      if (clearedAt && r.createdAt && r.createdAt <= clearedAt) continue;
+      await saveStudentResultFirebase(r.name, r.subject, r.answers, r.score, r.total, r.createdAt);
     }
     console.info('Local IndexedDB synced to Firebase');
   } catch (err) {
@@ -349,13 +352,15 @@ async function saveStudentResultIndexedDB(name, subject, userAnswers, score, tot
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(['results'], 'readwrite');
     const store = transaction.objectStore('results');
+    const now = Date.now();
     const resultRecord = {
       name: name,
       subject: subject || 'Umum',
       answers: userAnswers,
       score: score,
       total: total,
-      timestamp: new Date().toLocaleString('id-ID')
+      timestamp: new Date().toLocaleString('id-ID'),
+      createdAt: now
     };
     const request = store.add(resultRecord);
     request.onsuccess = () => resolve(request.result);
@@ -530,7 +535,7 @@ async function getCorrectAnswersFirebase(subject) {
   }
 }
 
-async function saveStudentResultFirebase(name, subject, userAnswers, score, total) {
+async function saveStudentResultFirebase(name, subject, userAnswers, score, total, createdAt) {
   try {
     const resultRecord = {
       name: name,
@@ -540,6 +545,7 @@ async function saveStudentResultFirebase(name, subject, userAnswers, score, tota
       total: total,
       timestamp: new Date().toLocaleString('id-ID')
     };
+    if (createdAt) resultRecord.createdAt = createdAt;
     await resultsCollection().add(resultRecord);
   } catch (err) {
     console.warn('saveStudentResultFirebase failed, saving to IndexedDB instead:', err);
