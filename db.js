@@ -45,9 +45,18 @@ function initFirebase() {
       if (!firebase.apps || !Array.isArray(firebase.apps)) {
         // compat build exposes firebase.apps as object/array; allow initialization
       }
-      firebase.initializeApp(FIREBASE_CONFIG);
+          firebase.initializeApp(FIREBASE_CONFIG);
       firebaseDb = firebase.firestore();
       firebaseInitialized = true;
+
+      // If there was an admin clear before Firebase became available,
+      // make sure remote results are cleared before any local sync occurs.
+      const clearedAt = parseInt(localStorage.getItem('cleared_results_at') || '0', 10);
+      if (clearedAt) {
+        clearAllResultsFirebase()
+          .then(() => localStorage.removeItem('cleared_results_at'))
+          .catch(err => console.warn('Pending remote clear failed:', err));
+      }
 
       // After successful init, attempt to sync any local data to remote
       try {
@@ -86,7 +95,7 @@ async function syncLocalToFirebase() {
     const localResults = await getAllResultsIndexedDB();
     for (const r of localResults) {
       // if admin recently cleared results, skip uploading older entries
-      if (clearedAt && r.createdAt && r.createdAt <= clearedAt) continue;
+      if (clearedAt && (!r.createdAt || r.createdAt <= clearedAt)) continue;
       await saveStudentResultFirebase(r.name, r.subject, r.answers, r.score, r.total, r.createdAt);
     }
     console.info('Local IndexedDB synced to Firebase');
@@ -500,15 +509,18 @@ async function getAvailableSubjectsFirebase() {
 
 async function getQuestionsFirebase(subject) {
   try {
-    let query = questionsCollection();
     if (subject) {
-      query = query.where('subject', '==', subject).orderBy('indexId');
-    } else {
-      query = query.orderBy('subject').orderBy('indexId');
+      const snapshot = await questionsCollection().where('subject', '==', subject).orderBy('indexId').get();
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     }
 
-    const snapshot = await query.get();
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const snapshot = await questionsCollection().get();
+    const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    results.sort((a, b) => {
+      if (a.subject === b.subject) return (a.indexId || 0) - (b.indexId || 0);
+      return String(a.subject).localeCompare(String(b.subject));
+    });
+    return results;
   } catch (err) {
     console.warn('getQuestionsFirebase failed, using IndexedDB:', err);
     return getQuestionsIndexedDB(subject);
