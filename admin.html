@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard Admin - Olimpiade Annur</title>
+  <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  <script src="https://unpkg.com/mammoth@1.4.2/mammoth.browser.min.js"></script>
+  <script src="db.js" defer></script>
+  <script src="admin.js" defer></script>
+</head>
+<body class="admin-dashboard">
+
+  <!-- Sidebar -->
+  <aside class="main-sidebar">
+    <div class="sidebar-brand">
+      <span class="sidebar-logo">
+        <img src="logo sekolah.png" alt="Logo Sekolah" />
+      </span>
+      <span>Admin Panel</span>
+    </div>
+    <div class="sidebar-menu">
+      <a href="#" class="menu-item active" data-target="tab-soal">
+        <span class="menu-icon">📝</span> Kelola Soal
+      </a>
+      <a href="#" class="menu-item" data-target="tab-hasil">
+        <span class="menu-icon">📊</span> Hasil Ujian
+      </a>
+      <a href="index.html" class="menu-item menu-back">
+        <span class="menu-icon">🚪</span> Portal Siswa
+      </a>
+    </div>
+  </aside>
+
+  <!-- Content Wrapper -->
+  <div class="content-wrapper">
+    <nav class="main-header">
+      <div class="header-title">🌟 Olimpiade Annur CBT</div>
+      <div class="header-user">👨‍💼 Administrator</div>
+    </nav>
+
+    <section class="content">
+
+      <!-- TAB: Kelola Soal -->
+      <div id="tab-soal" class="tab-pane active">
+        <div class="content-header">
+          <h1>📝 Manajemen Bank Soal</h1>
+          <p>Unggah dan kelola soal dari dokumen Microsoft Word (.docx)</p>
+        </div>
+
+        <div class="dashboard-grid">
+          <!-- Upload Card -->
+          <div class="card admin-card">
+            <div class="card-header card-header-blue">
+              <h3 class="card-title">📤 Upload Soal Baru</h3>
+            </div>
+            <div class="card-body">
+              <div class="form-group">
+                <label for="subjectInput">Mata Pelajaran</label>
+                <input type="text" id="subjectInput" class="form-control" placeholder="Contoh: Matematika, IPA, Bahasa Indonesia" required />
+              </div>
+              <div class="form-group mt-3">
+                <label>File Microsoft Word (.docx)</label>
+                <div class="file-upload-box">
+                  <label for="fileInput" class="custom-file-upload">
+                    ☁️ Pilih File .docx
+                  </label>
+                  <input type="file" id="fileInput" accept=".docx" />
+                  <span id="file-name-display" class="file-name-display">Belum ada file terpilih</span>
+                </div>
+              </div>
+              <button id="processBtn" class="btn btn-primary btn-block mt-3">💾 Proses &amp; Simpan</button>
+              <div id="status" class="status-msg mt-3"></div>
+            </div>
+          </div>
+
+          <!-- Preview Card -->
+          <div class="card admin-card">
+            <div class="card-header card-header-dark">
+              <h3 class="card-title">📋 Daftar Soal Tersimpan</h3>
+              <div class="card-header-actions">
+                <select id="filterSubject" class="form-select form-select-sm">
+                  <option value="">-- Semua Mapel --</option>
+                </select>
+                <button id="clearQuestionsBtn" class="btn btn-danger btn-sm">🗑️ Hapus</button>
+              </div>
+            </div>
+            <div class="card-body scrollable-body">
+              <div id="questionsPreview" class="questions-preview">
+                <p class="empty-state">📂 Belum ada soal di database.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: Hasil Ujian -->
+      <div id="tab-hasil" class="tab-pane">
+        <div class="content-header">
+          <h1>📊 Laporan Hasil Ujian</h1>
+          <p>Pantau dan unduh nilai ujian siswa</p>
+        </div>
+
+        <div class="card admin-card">
+          <div class="card-header card-header-green">
+            <h3 class="card-title">🏅 Tabel Nilai Siswa</h3>
+            <div class="card-header-actions">
+              <button id="exportBtn" class="btn btn-light btn-sm">⬇️ Ekspor CSV</button>
+              <button id="clearResultsBtn" class="btn btn-danger btn-sm">🗑️ Hapus Semua</button>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-container">
+              <table id="resultsTable" class="table table-striped table-hover">
+                <thead>
+                  <tr>
+                    <th>No</th>
+                    <th>Nama Siswa</th>
+                    <th>Mata Pelajaran</th>
+                    <th>Nilai</th>
+                    <th>Tanggal / Waktu</th>
+                    <th>Detail Jawaban</th>
+                  </tr>
+                </thead>
+                <tbody id="resultsBody">
+                  <tr>
+                    <td colspan="6" class="empty-state text-center py-4">📭 Belum ada siswa yang mengerjakan ujian.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+  </div>
+</body>
+</html>
