@@ -105,13 +105,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         subjects.forEach(subj => {
           const card = document.createElement('div');
           card.className = 'exam-card';
-          card.innerHTML = `
-            <div class="exam-info">
-              <h4>${subj}</h4>
-              <p><i class="fa-solid fa-clock"></i> 90 Menit • <i class="fa-solid fa-file-lines"></i> Pilihan Ganda & Esai</p>
-            </div>
-            <button class="btn btn-primary start-exam-btn" data-subject="${subj}">Mulai Kerjakan</button>
-          `;
+            const alreadyTaken = studentResults.some(r => (r.subject || '').toLowerCase() === (subj || '').toLowerCase());
+            card.innerHTML = `
+              <div class="exam-info">
+                <h4>${subj}</h4>
+                <p><i class="fa-solid fa-clock"></i> 90 Menit • <i class="fa-solid fa-file-lines"></i> Pilihan Ganda & Esai</p>
+              </div>
+              ${alreadyTaken ? `<button class="btn btn-outline" disabled>Sudah Mengerjakan</button>` : `<button class="btn btn-primary start-exam-btn" data-subject="${subj}">Mulai Kerjakan</button>`}
+            `;
           examsGrid.appendChild(card);
         });
       }
@@ -192,12 +193,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   async function startExam(subject) {
+    // Prevent starting if student already has a result for this subject
+    const studentName = sessionStorage.getItem('studentName') || '';
+    const allResults = await getAllResults();
+    const hasTaken = allResults.some(r => r.name.toLowerCase() === studentName.toLowerCase() && (r.subject || '').toLowerCase() === (subject || '').toLowerCase());
+    if (hasTaken) {
+      alert('Anda sudah pernah mengerjakan mata pelajaran ini. Anda tidak dapat mengulang.');
+      return false;
+    }
+
     currentSubject = subject;
     cbtSubjectName.textContent = subject;
-    
+
     hide(globalNav); // Hide nav for focus
     hide(dashboardSection);
-    
+
     const questionsLoaded = await renderExamQuestions(subject);
     if (questionsLoaded) {
       show(examSection);
