@@ -2,7 +2,7 @@
 // This app can use Firebase Firestore to store soal and hasil secara remote.
 // Jika Firebase belum dikonfigurasi, modul akan jatuh kembali ke IndexedDB lokal.
 
-const USE_FIREBASE_REMOTE = true;
+let USE_FIREBASE_REMOTE = true;
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyCybZ-o5IcsF9MEPwRd0nrRhT3YM6cqC5M",
   authDomain: "alstoreid1.firebaseapp.com",
@@ -15,6 +15,20 @@ const FIREBASE_CONFIG = {
 
 let firebaseInitialized = false;
 let firebaseDb = null;
+
+// Allow overriding Firebase config from a separate `firebase-config.js` file.
+// If you create `firebase-config.js`, set `window.FIREBASE_CONFIG = { ... }` and
+// optionally `window.USE_FIREBASE_REMOTE = true` to enable remote DB.
+if (typeof window !== 'undefined' && window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.apiKey) {
+  try {
+    Object.assign(FIREBASE_CONFIG, window.FIREBASE_CONFIG);
+    if (typeof window.USE_FIREBASE_REMOTE !== 'undefined') {
+      USE_FIREBASE_REMOTE = !!window.USE_FIREBASE_REMOTE;
+    }
+  } catch (err) {
+    console.warn('Failed to apply firebase-config override:', err);
+  }
+}
 
 function initFirebase() {
   if (!USE_FIREBASE_REMOTE || firebaseInitialized) return;
