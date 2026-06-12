@@ -19,16 +19,63 @@ let firebaseDb = null;
 function initFirebase() {
   if (!USE_FIREBASE_REMOTE || firebaseInitialized) return;
   const hasPlaceholderConfig = FIREBASE_CONFIG.apiKey.startsWith('REPLACE_') || FIREBASE_CONFIG.projectId.startsWith('REPLACE_');
-  if (hasPlaceholderConfig || typeof firebase === 'undefined' || !firebase.apps) return;
+  if (hasPlaceholderConfig) return;
 
-  firebase.initializeApp(FIREBASE_CONFIG);
-  firebaseDb = firebase.firestore();
-  firebaseInitialized = true;
+  // Try to initialize Firebase with retries in case SDK is still loading
+  let attempts = 0;
+  const maxAttempts = 6;
+  const tryInit = () => {
+    attempts++;
+    try {
+      if (typeof firebase === 'undefined') throw new Error('Firebase SDK not loaded');
+      if (!firebase.apps || !Array.isArray(firebase.apps)) {
+        // compat build exposes firebase.apps as object/array; allow initialization
+      }
+      firebase.initializeApp(FIREBASE_CONFIG);
+      firebaseDb = firebase.firestore();
+      firebaseInitialized = true;
+
+      // After successful init, attempt to sync any local data to remote
+      try {
+        syncLocalToFirebase().catch(err => console.warn('Sync to Firebase failed:', err));
+      } catch (err) {
+        console.warn('syncLocalToFirebase threw:', err);
+      }
+    } catch (err) {
+      if (attempts < maxAttempts) {
+        setTimeout(tryInit, 800 * attempts);
+      } else {
+        console.warn('Firebase init failed:', err.message || err);
+      }
+    }
+  };
+  tryInit();
 }
 
 function isFirebaseEnabled() {
   initFirebase();
   return firebaseInitialized;
+}
+
+// If Firebase becomes available later, upload local IndexedDB data so other devices can see it.
+async function syncLocalToFirebase() {
+  if (!isFirebaseEnabled()) return;
+  try {
+    const subjects = await getAvailableSubjectsIndexedDB();
+    for (const subj of subjects) {
+      const qs = await getQuestionsIndexedDB(subj);
+      const ans = await getCorrectAnswersIndexedDB(subj);
+      await saveExamDataFirebase(subj, qs, ans);
+    }
+    // Also upload results if any
+    const localResults = await getAllResultsIndexedDB();
+    for (const r of localResults) {
+      await saveStudentResultFirebase(r.name, r.subject, r.answers, r.score, r.total);
+    }
+    console.info('Local IndexedDB synced to Firebase');
+  } catch (err) {
+    console.warn('Error syncing local DB to Firebase:', err);
+  }
 }
 
 function questionsCollection() {
@@ -314,112 +361,157 @@ async function getRankingDataIndexedDB(subject = null) {
 
 // Firebase remote implementation
 async function clearSubjectDataFirebase(subject) {
-  const batch = firebaseDb.batch();
-  const qSnapshot = await questionsCollection().where('subject', '==', subject).get();
-  const aSnapshot = await answersCollection().where('subject', '==', subject).get();
-  qSnapshot.forEach(doc => batch.delete(doc.ref));
-  aSnapshot.forEach(doc => batch.delete(doc.ref));
-  await batch.commit();
+  try {
+    const batch = firebaseDb.batch();
+    const qSnapshot = await questionsCollection().where('subject', '==', subject).get();
+    const aSnapshot = await answersCollection().where('subject', '==', subject).get();
+    qSnapshot.forEach(doc => batch.delete(doc.ref));
+    aSnapshot.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+  } catch (err) {
+    console.warn('clearSubjectDataFirebase failed, falling back to IndexedDB:', err);
+    return clearSubjectDataIndexedDB(subject);
+  }
 }
 
 async function clearExamDataFirebase() {
-  const batch = firebaseDb.batch();
-  const qSnapshot = await questionsCollection().get();
-  const aSnapshot = await answersCollection().get();
-  qSnapshot.forEach(doc => batch.delete(doc.ref));
-  aSnapshot.forEach(doc => batch.delete(doc.ref));
-  await batch.commit();
+  try {
+    const batch = firebaseDb.batch();
+    const qSnapshot = await questionsCollection().get();
+    const aSnapshot = await answersCollection().get();
+    qSnapshot.forEach(doc => batch.delete(doc.ref));
+    aSnapshot.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+  } catch (err) {
+    console.warn('clearExamDataFirebase failed, falling back to IndexedDB:', err);
+    return clearExamDataIndexedDB();
+  }
 }
 
 async function saveExamDataFirebase(subject, questions, answers) {
-  await clearSubjectDataFirebase(subject);
-  const batch = firebaseDb.batch();
+  try {
+    await clearSubjectDataFirebase(subject);
+    const batch = firebaseDb.batch();
 
-  questions.forEach((q, index) => {
-    const qRef = questionsCollection().doc(safeDocId(subject, index));
-    batch.set(qRef, {
-      subject,
-      indexId: index,
-      text: q.text,
-      options: q.options || [],
-      type: q.type,
-      difficulty: q.difficulty || ''
+    questions.forEach((q, index) => {
+      const qRef = questionsCollection().doc(safeDocId(subject, index));
+      batch.set(qRef, {
+        subject,
+        indexId: index,
+        text: q.text,
+        options: q.options || [],
+        type: q.type,
+        difficulty: q.difficulty || ''
+      });
+
+      const answerVal = (answers && answers[`q${index}`] !== undefined)
+        ? answers[`q${index}`]
+        : (answers && answers[index] !== undefined ? answers[index] : '');
+
+      const aRef = answersCollection().doc(safeDocId(subject, index, '_ans'));
+      batch.set(aRef, {
+        subject,
+        indexId: index,
+        answer: answerVal
+      });
     });
 
-    const answerVal = (answers && answers[`q${index}`] !== undefined)
-      ? answers[`q${index}`]
-      : (answers && answers[index] !== undefined ? answers[index] : '');
-
-    const aRef = answersCollection().doc(safeDocId(subject, index, '_ans'));
-    batch.set(aRef, {
-      subject,
-      indexId: index,
-      answer: answerVal
-    });
-  });
-
-  await batch.commit();
+    await batch.commit();
+  } catch (err) {
+    console.warn('saveExamDataFirebase failed, saving to IndexedDB instead:', err);
+    return saveExamDataIndexedDB(subject, questions, answers);
+  }
 }
 
 async function getAvailableSubjectsFirebase() {
-  const snapshot = await questionsCollection().get();
-  const subjects = new Set();
-  snapshot.docs.forEach(doc => {
-    const data = doc.data();
-    if (data.subject) subjects.add(data.subject);
-  });
-  return Array.from(subjects);
+  try {
+    const snapshot = await questionsCollection().get();
+    const subjects = new Set();
+    snapshot.docs.forEach(doc => {
+      const data = doc.data();
+      if (data.subject) subjects.add(data.subject);
+    });
+    return Array.from(subjects);
+  } catch (err) {
+    console.warn('getAvailableSubjectsFirebase failed, using IndexedDB:', err);
+    return getAvailableSubjectsIndexedDB();
+  }
 }
 
 async function getQuestionsFirebase(subject) {
-  let query = questionsCollection();
-  if (subject) {
-    query = query.where('subject', '==', subject).orderBy('indexId');
-  } else {
-    query = query.orderBy('subject').orderBy('indexId');
-  }
+  try {
+    let query = questionsCollection();
+    if (subject) {
+      query = query.where('subject', '==', subject).orderBy('indexId');
+    } else {
+      query = query.orderBy('subject').orderBy('indexId');
+    }
 
-  const snapshot = await query.get();
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const snapshot = await query.get();
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (err) {
+    console.warn('getQuestionsFirebase failed, using IndexedDB:', err);
+    return getQuestionsIndexedDB(subject);
+  }
 }
 
 async function getCorrectAnswersFirebase(subject) {
-  let query = answersCollection();
-  if (subject) {
-    query = query.where('subject', '==', subject);
-  }
+  try {
+    let query = answersCollection();
+    if (subject) {
+      query = query.where('subject', '==', subject);
+    }
 
-  const snapshot = await query.get();
-  const resultObj = {};
-  snapshot.docs.forEach(doc => {
-    const data = doc.data();
-    resultObj[`q${data.indexId}`] = data.answer;
-  });
-  return resultObj;
+    const snapshot = await query.get();
+    const resultObj = {};
+    snapshot.docs.forEach(doc => {
+      const data = doc.data();
+      resultObj[`q${data.indexId}`] = data.answer;
+    });
+    return resultObj;
+  } catch (err) {
+    console.warn('getCorrectAnswersFirebase failed, using IndexedDB:', err);
+    return getCorrectAnswersIndexedDB(subject);
+  }
 }
 
 async function saveStudentResultFirebase(name, subject, userAnswers, score, total) {
-  const resultRecord = {
-    name: name,
-    subject: subject || 'Umum',
-    answers: userAnswers,
-    score: score,
-    total: total,
-    timestamp: new Date().toLocaleString('id-ID')
-  };
-  await resultsCollection().add(resultRecord);
+  try {
+    const resultRecord = {
+      name: name,
+      subject: subject || 'Umum',
+      answers: userAnswers,
+      score: score,
+      total: total,
+      timestamp: new Date().toLocaleString('id-ID')
+    };
+    await resultsCollection().add(resultRecord);
+  } catch (err) {
+    console.warn('saveStudentResultFirebase failed, saving to IndexedDB instead:', err);
+    return saveStudentResultIndexedDB(name, subject, userAnswers, score, total);
+  }
 }
 
 async function getAllResultsFirebase() {
-  const snapshot = await resultsCollection().get();
-  return snapshot.docs.map(doc => doc.data());
+  try {
+    const snapshot = await resultsCollection().get();
+    return snapshot.docs.map(doc => doc.data());
+  } catch (err) {
+    console.warn('getAllResultsFirebase failed, using IndexedDB:', err);
+    return getAllResultsIndexedDB();
+  }
 }
 
 async function clearAllResultsFirebase() {
-  const snapshot = await resultsCollection().get();
-  const batch = firebaseDb.batch();
-  snapshot.docs.forEach(doc => batch.delete(doc.ref));
-  await batch.commit();
+  try {
+    const snapshot = await resultsCollection().get();
+    const batch = firebaseDb.batch();
+    snapshot.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+  } catch (err) {
+    console.warn('clearAllResultsFirebase failed, falling back to IndexedDB:', err);
+    return clearAllResultsIndexedDB();
+  }
 }
 
 async function getRankingDataFirebase(subject = null) {
