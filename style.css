@@ -539,6 +539,21 @@ body {
   color: var(--gray-900);
   line-height: 1.7;
 }
+.question-image-wrapper {
+  margin: 1rem 0;
+  text-align: center;
+}
+.question-image,
+.q-preview-image img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.75rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+.q-preview-image {
+  margin: 0.75rem 0;
+}
 .code-block {
   background: var(--gray-900);
   color: #86EFAC;

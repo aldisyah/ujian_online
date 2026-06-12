@@ -1,9 +1,19 @@
 // admin.js - Admin page script for Olimpiade Annur
 
-// Convert Mammoth HTML structure to clean lines
+// Convert Mammoth HTML structure to clean lines and keep image markers
 function htmlToLines(html) {
   const temp = document.createElement('div');
   temp.innerHTML = html;
+
+  // Replace images with a text marker so parsing can capture them.
+  const images = temp.getElementsByTagName('img');
+  for (let i = images.length - 1; i >= 0; i--) {
+    const img = images[i];
+    const markerText = `[[IMG:${img.src}]]`;
+    const markerNode = document.createTextNode(markerText);
+    img.parentNode.insertBefore(markerNode, img);
+    img.parentNode.removeChild(img);
+  }
   
   const blockTags = ['p', 'li', 'tr', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'td', 'th', 'br'];
   blockTags.forEach(tag => {
@@ -39,11 +49,23 @@ function parseDocxLines(lines) {
   const questions = [];
   const answers = {};
   let currentQuestion = null;
+  let pendingImage = null;
   let isKeySection = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
+
+    const imgMatch = line.match(/^\[\[IMG:(.+?)\]\]$/i);
+    if (imgMatch) {
+      const imageUrl = imgMatch[1].trim();
+      if (currentQuestion) {
+        currentQuestion.image = imageUrl;
+      } else {
+        pendingImage = imageUrl;
+      }
+      continue;
+    }
 
     const bulkKeyHeaderMatch = line.match(/^kunci\s*jawaban\s*:?\s*$/i);
     if (bulkKeyHeaderMatch) {
@@ -96,6 +118,10 @@ function parseDocxLines(lines) {
         options: [],
         difficulty: difficulty
       };
+      if (pendingImage) {
+        currentQuestion.image = pendingImage;
+        pendingImage = null;
+      }
       questions.push(currentQuestion);
       continue;
     }
@@ -226,11 +252,13 @@ async function loadQuestionsPreview() {
       }
       
       let subjBadge = `<span class="badge" style="background:#6c757d; color:#fff; font-size:0.7rem; padding:0.15rem 0.5rem; border-radius:4px; margin-right:5px;">${q.subject}</span>`;
+      const imageHtml = q.image ? `<div class="q-preview-image"><img src="${q.image}" alt="Gambar Soal ${q.indexId + 1}" /></div>` : '';
 
       qDiv.innerHTML = `
         <div class="q-preview-title">
           <strong>${q.indexId + 1}.</strong> ${subjBadge} ${q.text} <span class="badge ${q.type === 'multiple' ? 'badge-mc' : 'badge-free'}">${q.type}</span> ${diffBadge}
         </div>
+        ${imageHtml}
         ${optionsHtml}
         <div class="q-preview-key">
           <strong>Kunci Jawaban:</strong> <span class="key-value">${correctAns}</span>
@@ -456,7 +484,14 @@ document.addEventListener('DOMContentLoaded', () => {
       reader.onload = function(event) {
         const arrayBuffer = event.target.result;
         
-        mammoth.convertToHtml({ arrayBuffer: arrayBuffer })
+        mammoth.convertToHtml({
+          arrayBuffer: arrayBuffer,
+          convertImage: mammoth.images.inline(function(element) {
+            return element.read('base64').then(function(imageBuffer) {
+              return { src: `data:${element.contentType};base64,${imageBuffer}` };
+            });
+          })
+        })
           .then(async (result) => {
             const html = result.value;
             const lines = htmlToLines(html);

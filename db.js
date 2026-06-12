@@ -415,7 +415,9 @@ async function saveExamDataFirebase(subject, questions, answers) {
         text: q.text,
         options: q.options || [],
         type: q.type,
-        difficulty: q.difficulty || ''
+        difficulty: q.difficulty || '',
+        // include image if present so clients can render question images
+        image: q.image || null
       });
 
       const answerVal = (answers && answers[`q${index}`] !== undefined)

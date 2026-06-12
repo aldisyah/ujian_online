@@ -338,6 +338,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         qTitle.innerHTML = formatQuestionText(q.text);
         qBox.appendChild(qTitle);
 
+        if (q.image) {
+          const qImageWrapper = document.createElement('div');
+          qImageWrapper.className = 'question-image-wrapper';
+          const qImg = document.createElement('img');
+          qImg.src = q.image;
+          qImg.alt = `Gambar Soal ${index + 1}`;
+          qImg.className = 'question-image';
+          qImageWrapper.appendChild(qImg);
+          qBox.appendChild(qImageWrapper);
+        }
+
         if (q.type === 'multiple' && q.options && q.options.length > 0) {
           const optionsList = document.createElement('div');
           optionsList.className = 'options-list';

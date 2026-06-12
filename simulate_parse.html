@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Simulate parseDocxLines</title>
+  <style>
+    body { font-family: system-ui, Arial; padding: 1rem; }
+    pre { background:#f7f7f9; padding:1rem; border-radius:6px; overflow:auto; }
+  </style>
+</head>
+<body>
+  <h2>Simulasi parsing `.docx` ke soal (termasuk gambar)</h2>
+  <p>Buka DevTools (Console) untuk melihat objek JS; atau lihat ringkasan di bawah.</p>
+  <pre id="output">Menjalankan simulasi...</pre>
+
+  <script src="admin.js"></script>
+  <script>
+    // 1x1 transparent PNG
+    const tinyPng = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAAWgmWQ0AAAAASUVORK5CYII=';
+
+    // Example HTML coming from mammoth.convertToHtml() (images inlined)
+    const exampleHtml = `
+      <p>1. Gambar pada soal berikut</p>
+      <img src="${tinyPng}" alt="G1" />
+      <p>A) Pilihan A</p>
+      <p>B) Pilihan B</p>
+      <p>C) Pilihan C</p>
+      <p>kunci jawaban: A</p>
+    `;
+
+    const out = document.getElementById('output');
+    try {
+      // Use admin.js helpers
+      const lines = htmlToLines(exampleHtml);
+      const parsed = parseDocxLines(lines);
+
+      out.textContent = '=== SOURCE HTML ===\n' + exampleHtml.trim() + '\n\n'
+        + '=== LINES ===\n' + JSON.stringify(lines, null, 2) + '\n\n'
+        + '=== PARSED ===\n' + JSON.stringify(parsed, null, 2);
+
+      console.log('Simulate parseDocxLines - lines:', lines);
+      console.log('Simulate parseDocxLines - parsed:', parsed);
+    } catch (err) {
+      out.textContent = 'Error during simulation: ' + err.message;
+      console.error(err);
+    }
+  </script>
+</body>
+</html>
