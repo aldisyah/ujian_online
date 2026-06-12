@@ -288,6 +288,69 @@ async function exportResultsToCSV() {
   }
 }
 
+// Load ranking table
+async function loadRankingTable() {
+  const rankingBody = document.getElementById('rankingBody');
+  const filterRankingSubject = document.getElementById('filterRankingSubject');
+  if (!rankingBody) return;
+
+  try {
+    const selectedSubject = filterRankingSubject ? filterRankingSubject.value : '';
+    const ranking = await getRankingData(selectedSubject || null);
+    
+    if (ranking.length === 0) {
+      rankingBody.innerHTML = `<tr><td colspan="6" class="empty-state text-center py-4"><i class="fa-solid fa-inbox text-muted fa-2x mb-2 d-block"></i> Belum ada data ranking.</td></tr>`;
+      return;
+    }
+
+    rankingBody.innerHTML = '';
+    ranking.forEach((item) => {
+      const tr = document.createElement('tr');
+      
+      // Get medal emoji based on rank
+      let medalEmoji = '';
+      if (item.rank === 1) medalEmoji = '🥇';
+      else if (item.rank === 2) medalEmoji = '🥈';
+      else if (item.rank === 3) medalEmoji = '🥉';
+      else medalEmoji = '▪️';
+
+      tr.innerHTML = `
+        <td style="text-align: center; font-weight: bold; font-size: 1.1em;">${medalEmoji} ${item.rank}</td>
+        <td class="student-name"><strong>${item.name}</strong></td>
+        <td><span class="badge badge-info" style="background:#17a2b8; color:#fff; padding:0.2rem 0.5rem; border-radius:4px;">${item.subject || 'Umum'}</span></td>
+        <td style="text-align: center;"><span class="badge score-badge">${item.score}</span></td>
+        <td style="text-align: center;"><span class="percentage-badge">${item.percentage}%</span></td>
+        <td>${item.timestamp}</td>
+      `;
+      rankingBody.appendChild(tr);
+    });
+  } catch (error) {
+    console.error('Error loading ranking:', error);
+  }
+}
+
+// Load subjects into ranking filter dropdown
+async function loadRankingSubjectFilter() {
+  const filterRankingSubject = document.getElementById('filterRankingSubject');
+  if (!filterRankingSubject) return;
+
+  try {
+    const subjects = await getAvailableSubjects();
+    const currentVal = filterRankingSubject.value;
+    
+    filterRankingSubject.innerHTML = '<option value="">-- Semua Mapel --</option>';
+    subjects.forEach(subj => {
+      filterRankingSubject.innerHTML += `<option value="${subj}">${subj}</option>`;
+    });
+    
+    if (subjects.includes(currentVal)) {
+      filterRankingSubject.value = currentVal;
+    }
+  } catch (error) {
+    console.error('Error loading ranking subjects:', error);
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const fileInput = document.getElementById('fileInput');
   const subjectInput = document.getElementById('subjectInput');
@@ -320,11 +383,21 @@ document.addEventListener('DOMContentLoaded', () => {
   loadSubjectFilter();
   loadResultsTable();
   loadQuestionsPreview();
+  loadRankingSubjectFilter();
+  loadRankingTable();
 
   // Filter change
   if (filterSubject) {
     filterSubject.addEventListener('change', () => {
       loadQuestionsPreview();
+    });
+  }
+
+  // Ranking filter change
+  const filterRankingSubject = document.getElementById('filterRankingSubject');
+  if (filterRankingSubject) {
+    filterRankingSubject.addEventListener('change', () => {
+      loadRankingTable();
     });
   }
 

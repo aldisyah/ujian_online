@@ -28,6 +28,9 @@
       <a href="#" class="menu-item" data-target="tab-hasil">
         <span class="menu-icon">📊</span> Hasil Ujian
       </a>
+      <a href="#" class="menu-item" data-target="tab-ranking">
+        <span class="menu-icon">🏆</span> Ranking Siswa
+      </a>
       <a href="index.html" class="menu-item menu-back">
         <span class="menu-icon">🚪</span> Portal Siswa
       </a>
@@ -127,6 +130,46 @@
                 <tbody id="resultsBody">
                   <tr>
                     <td colspan="6" class="empty-state text-center py-4">📭 Belum ada siswa yang mengerjakan ujian.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: Ranking Siswa -->
+      <div id="tab-ranking" class="tab-pane">
+        <div class="content-header">
+          <h1>🏆 Ranking Siswa</h1>
+          <p>Lihat daftar siswa berdasarkan nilai tertinggi</p>
+        </div>
+
+        <div class="card admin-card">
+          <div class="card-header card-header-purple">
+            <h3 class="card-title">🏅 Tabel Ranking Siswa</h3>
+            <div class="card-header-actions">
+              <select id="filterRankingSubject" class="form-select form-select-sm">
+                <option value="">-- Semua Mapel --</option>
+              </select>
+            </div>
+          </div>
+          <div class="card-body p-0">
+            <div class="table-container">
+              <table id="rankingTable" class="table table-striped table-hover">
+                <thead>
+                  <tr>
+                    <th style="text-align: center; width: 80px;">Ranking</th>
+                    <th>Nama Siswa</th>
+                    <th>Mata Pelajaran</th>
+                    <th style="text-align: center;">Nilai</th>
+                    <th style="text-align: center;">Persentase</th>
+                    <th>Tanggal Pengerjaan</th>
+                  </tr>
+                </thead>
+                <tbody id="rankingBody">
+                  <tr>
+                    <td colspan="6" class="empty-state text-center py-4">📭 Belum ada data ranking.</td>
                   </tr>
                 </tbody>
               </table>

@@ -200,3 +200,38 @@ async function clearAllResults() {
     request.onerror = (err) => reject(err);
   });
 }
+
+// Get ranking data sorted by score (highest first)
+async function getRankingData(subject = null) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(['results'], 'readonly');
+    const store = transaction.objectStore('results');
+    const request = store.getAll();
+    request.onsuccess = () => {
+      let results = request.result;
+      
+      // Filter by subject if provided
+      if (subject) {
+        results = results.filter(r => r.subject === subject);
+      }
+      
+      // Sort by score descending
+      results.sort((a, b) => b.score - a.score);
+      
+      // Add ranking position
+      const ranking = results.map((result, index) => ({
+        rank: index + 1,
+        name: result.name,
+        subject: result.subject,
+        score: result.score,
+        total: result.total,
+        percentage: Math.round((result.score / 100) * 100),
+        timestamp: result.timestamp
+      }));
+      
+      resolve(ranking);
+    };
+    request.onerror = (err) => reject(err);
+  });
+}

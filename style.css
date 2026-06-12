@@ -961,6 +961,7 @@ body {
 .card-header-blue   { background: linear-gradient(135deg, var(--blue-dk), var(--blue)); }
 .card-header-dark   { background: linear-gradient(135deg, #1F2937, #374151); }
 .card-header-green  { background: linear-gradient(135deg, var(--green-dk), var(--green)); }
+.card-header-purple { background: linear-gradient(135deg, var(--purple-dk), var(--purple)); }
 .card-title {
   color: var(--white);
   font-size: 1rem;
@@ -1165,6 +1166,14 @@ input[type="file"] { display: none; }
 .table.table-striped tbody tr:hover { background: var(--blue-lt); }
 .score-badge {
   background: var(--orange);
+  color: var(--white);
+  padding: 0.3rem 0.7rem;
+  border-radius: var(--radius-xl);
+  font-weight: 900;
+  font-size: 0.85rem;
+}
+.percentage-badge {
+  background: var(--green);
   color: var(--white);
   padding: 0.3rem 0.7rem;
   border-radius: var(--radius-xl);
