@@ -38,7 +38,7 @@ function initFirebase() {
   // Try to initialize Firebase with retries in case SDK is still loading
   let attempts = 0;
   const maxAttempts = 6;
-  const tryInit = () => {
+  const tryInit = async () => {
     attempts++;
     try {
       if (typeof firebase === 'undefined') throw new Error('Firebase SDK not loaded');
@@ -53,16 +53,19 @@ function initFirebase() {
       // make sure remote results are cleared before any local sync occurs.
       const clearedAt = parseInt(localStorage.getItem('cleared_results_at') || '0', 10);
       if (clearedAt) {
-        clearAllResultsFirebase()
-          .then(() => localStorage.removeItem('cleared_results_at'))
-          .catch(err => console.warn('Pending remote clear failed:', err));
+        try {
+          await clearAllResultsFirebase();
+          try { localStorage.removeItem('cleared_results_at'); } catch (e) { /* ignore */ }
+        } catch (err) {
+          console.warn('Pending remote clear failed:', err);
+        }
       }
 
-      // After successful init, attempt to sync any local data to remote
+      // After successful init (and any pending clear), sync any local data to remote
       try {
-        syncLocalToFirebase().catch(err => console.warn('Sync to Firebase failed:', err));
+        await syncLocalToFirebase();
       } catch (err) {
-        console.warn('syncLocalToFirebase threw:', err);
+        console.warn('Sync to Firebase failed:', err);
       }
     } catch (err) {
       if (attempts < maxAttempts) {
