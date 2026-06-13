@@ -1,0 +1,9 @@
+1.Buatlah 1 buah folder baru dengan nama M12
+2.Buka folder tersebut dengan VS Code
+3.Buat file baru dengan nama index.html
+4.Gunakan kembali code M10 dan tambahkan code pada latihan di model
+praktek M12.
+5.Kerjakan task1 dan task2. Sesuaikan dengan gambar yang ada 
+pada modul M12.
+6. Upload hasil code task1 dan task2 pada channel M12 dengan mereply
+postingan Aktifitas partisipatif M12-Membuat tabel dan form.
