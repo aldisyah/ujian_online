@@ -326,10 +326,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (q.image) {
           const wrapper = document.createElement('div');
           wrapper.className = 'question-image-wrapper';
+          const loadingMsg = document.createElement('p');
+          loadingMsg.className = 'img-loading-msg';
+          loadingMsg.textContent = '⏳ Memuat gambar...';
+          wrapper.appendChild(loadingMsg);
           const img = document.createElement('img');
-          img.src = q.image;
           img.alt = `Gambar Soal ${index + 1}`;
           img.className = 'question-image';
+          img.style.display = 'none';
+          img.onload = () => {
+            loadingMsg.remove();
+            img.style.display = 'block';
+          };
+          img.onerror = () => {
+            loadingMsg.textContent = '⚠️ Gambar tidak dapat dimuat.';
+          };
+          img.src = q.image;
           wrapper.appendChild(img);
           qBox.appendChild(wrapper);
         }

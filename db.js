@@ -1,4 +1,6 @@
 // db.js - Database helper for Olimpiade Annur
+// PERBAIKAN: gambar base64 disimpan di IndexedDB store 'images' yang terpisah
+// agar tidak melebihi batas 1MB dokumen Firestore dan tidak hilang saat sinkronisasi.
 
 let USE_FIREBASE_REMOTE = true;
 const FIREBASE_CONFIG = {
@@ -13,7 +15,6 @@ const FIREBASE_CONFIG = {
 
 let firebaseInitialized = false;
 let firebaseDb = null;
-// Promise yang di-resolve setelah Firebase berhasil init (atau gagal)
 let firebaseReadyPromise = null;
 let firebaseReadyResolve = null;
 
@@ -28,7 +29,6 @@ if (typeof window !== 'undefined' && window.FIREBASE_CONFIG && window.FIREBASE_C
   }
 }
 
-// Buat promise yang bisa di-await oleh caller untuk menunggu Firebase siap
 firebaseReadyPromise = new Promise((resolve) => {
   firebaseReadyResolve = resolve;
 });
@@ -68,31 +68,126 @@ function isFirebaseEnabled() {
   return firebaseInitialized;
 }
 
-// Tunggu sampai Firebase siap (atau gagal), lalu tentukan pakai Firebase atau IndexedDB
 async function waitForFirebase() {
   await firebaseReadyPromise;
   return firebaseInitialized;
 }
 
-function questionsCollection() {
-  return firebaseDb.collection('questions');
-}
-
-function answersCollection() {
-  return firebaseDb.collection('answers');
-}
-
-function resultsCollection() {
-  return firebaseDb.collection('results');
-}
+function questionsCollection() { return firebaseDb.collection('questions'); }
+function answersCollection()  { return firebaseDb.collection('answers'); }
+function resultsCollection()  { return firebaseDb.collection('results'); }
 
 function safeDocId(subject, index, suffix = '') {
   return `${subject.replace(/[^a-zA-Z0-9]/g, '_')}_${index}${suffix}`;
 }
 
+// ─── Kunci gambar untuk IndexedDB images store ───────────────────────────────
+// Format: "subject||indexId"  (pakai separator yang tidak mungkin ada di subject)
+function imageKey(subject, indexId) {
+  return `${subject}||${indexId}`;
+}
+
+// ─── IndexedDB ───────────────────────────────────────────────────────────────
+// Versi DB dinaikkan ke 4 agar store 'images' otomatis dibuat di browser yang
+// sudah punya versi lama.
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('OlimpiadeAnnurDB', 4);
+    request.onerror = (event) => reject('Gagal membuka database: ' + event.target.error);
+    request.onsuccess = (event) => resolve(event.target.result);
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      // Hapus store lama supaya schema bersih
+      ['questions', 'answers', 'results', 'images'].forEach(name => {
+        if (db.objectStoreNames.contains(name)) db.deleteObjectStore(name);
+      });
+      db.createObjectStore('questions', { keyPath: 'id', autoIncrement: true });
+      db.createObjectStore('answers',   { keyPath: 'id', autoIncrement: true });
+      db.createObjectStore('results',   { keyPath: 'id', autoIncrement: true });
+      // Store khusus gambar — key = "subject||indexId", value = data URI base64
+      db.createObjectStore('images',    { keyPath: 'imgKey' });
+    };
+  });
+}
+
+// ── Simpan satu gambar ke IndexedDB ──
+async function saveImageToIDB(subject, indexId, dataUri) {
+  if (!dataUri) return;
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['images'], 'readwrite');
+    tx.objectStore('images').put({ imgKey: imageKey(subject, indexId), dataUri });
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e);
+  });
+}
+
+// ── Ambil satu gambar dari IndexedDB ──
+async function getImageFromIDB(subject, indexId) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['images'], 'readonly');
+    const req = tx.objectStore('images').get(imageKey(subject, indexId));
+    req.onsuccess = () => resolve(req.result ? req.result.dataUri : null);
+    req.onerror = (e) => reject(e);
+  });
+}
+
+// ── Hapus semua gambar satu mata pelajaran dari IndexedDB ──
+async function clearImagesForSubjectIDB(subject) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['images'], 'readwrite');
+    const store = tx.objectStore('images');
+    const req = store.openCursor();
+    req.onsuccess = (e) => {
+      const cursor = e.target.result;
+      if (cursor) {
+        if (cursor.value.imgKey.startsWith(subject + '||')) cursor.delete();
+        cursor.continue();
+      }
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e);
+  });
+}
+
+// ── Hapus semua gambar dari IndexedDB ──
+async function clearAllImagesIDB() {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(['images'], 'readwrite');
+    tx.objectStore('images').clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = (e) => reject(e);
+  });
+}
+
+// ─── Public API ──────────────────────────────────────────────────────────────
+
 async function saveExamData(subject, questions, answers) {
   const useFirebase = await waitForFirebase();
-  if (useFirebase) return saveExamDataFirebase(subject, questions, answers);
+
+  // 1. Pisahkan gambar dari objek soal sebelum disimpan ke Firebase/IDB utama
+  const questionsWithoutImage = questions.map((q, index) => {
+    const { image, ...rest } = q;
+    return { ...rest, hasImage: !!image };
+  });
+
+  // 2. Simpan gambar ke IDB lokal (selalu, terlepas Firebase/IDB)
+  await clearImagesForSubjectIDB(subject);
+  for (let i = 0; i < questions.length; i++) {
+    if (questions[i].image) {
+      await saveImageToIDB(subject, i, questions[i].image);
+    }
+  }
+
+  // 3. Simpan data soal (tanpa gambar) ke Firebase atau IDB
+  if (useFirebase) {
+    return saveExamDataFirebase(subject, questionsWithoutImage, answers);
+  }
+  // Untuk IDB, simpan juga dengan gambar agar offline tetap bekerja
   return saveExamDataIndexedDB(subject, questions, answers);
 }
 
@@ -100,6 +195,7 @@ async function clearSubjectData(subject) {
   const useFirebase = await waitForFirebase();
   const tasks = [];
   tasks.push(clearSubjectDataIndexedDB(subject).catch(e => console.warn('clearSubjectData IDB:', e)));
+  tasks.push(clearImagesForSubjectIDB(subject).catch(e => console.warn('clearImages IDB:', e)));
   if (useFirebase) tasks.push(clearSubjectDataFirebase(subject).catch(e => console.warn('clearSubjectData FB:', e)));
   return Promise.all(tasks);
 }
@@ -108,6 +204,7 @@ async function clearExamData() {
   const useFirebase = await waitForFirebase();
   const tasks = [];
   tasks.push(clearExamDataIndexedDB().catch(e => console.warn('clearExamData IDB:', e)));
+  tasks.push(clearAllImagesIDB().catch(e => console.warn('clearImages IDB:', e)));
   if (useFirebase) tasks.push(clearExamDataFirebase().catch(e => console.warn('clearExamData FB:', e)));
   return Promise.all(tasks);
 }
@@ -118,10 +215,27 @@ async function getAvailableSubjects() {
   return getAvailableSubjectsIndexedDB();
 }
 
+// getQuestions: setelah mengambil soal, inject kembali gambar dari IDB lokal
 async function getQuestions(subject) {
   const useFirebase = await waitForFirebase();
-  if (useFirebase) return getQuestionsFirebase(subject);
-  return getQuestionsIndexedDB(subject);
+  let questions;
+  if (useFirebase) {
+    questions = await getQuestionsFirebase(subject);
+  } else {
+    questions = await getQuestionsIndexedDB(subject);
+  }
+
+  // Inject gambar dari IDB lokal ke tiap soal
+  for (const q of questions) {
+    const subj = q.subject || subject;
+    const idx  = (typeof q.indexId !== 'undefined') ? q.indexId : 0;
+    if (q.hasImage || q.image) {
+      const img = await getImageFromIDB(subj, idx);
+      if (img) q.image = img;
+    }
+  }
+
+  return questions;
 }
 
 async function getCorrectAnswers(subject) {
@@ -144,7 +258,6 @@ async function getAllResults() {
 
 async function clearAllResults() {
   const useFirebase = await waitForFirebase();
-  // Hapus dari kedua storage sekaligus agar tidak ada sisa data yang ter-reload
   const tasks = [];
   tasks.push(clearAllResultsIndexedDB().catch(e => console.warn('clearAllResults IDB:', e)));
   if (useFirebase) tasks.push(clearAllResultsFirebase().catch(e => console.warn('clearAllResults FB:', e)));
@@ -157,24 +270,7 @@ async function getRankingData(subject = null) {
   return getRankingDataIndexedDB(subject);
 }
 
-// ─── IndexedDB ──────────────────────────────────────────────────────────────
-
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open('OlimpiadeAnnurDB', 3);
-    request.onerror = (event) => reject('Gagal membuka database: ' + event.target.error);
-    request.onsuccess = (event) => resolve(event.target.result);
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      if (db.objectStoreNames.contains('questions')) db.deleteObjectStore('questions');
-      if (db.objectStoreNames.contains('answers')) db.deleteObjectStore('answers');
-      if (db.objectStoreNames.contains('results')) db.deleteObjectStore('results');
-      db.createObjectStore('questions', { keyPath: 'id', autoIncrement: true });
-      db.createObjectStore('answers', { keyPath: 'id', autoIncrement: true });
-      db.createObjectStore('results', { keyPath: 'id', autoIncrement: true });
-    };
-  });
-}
+// ─── IndexedDB implementations ───────────────────────────────────────────────
 
 async function clearSubjectDataIndexedDB(subject) {
   const db = await openDB();
@@ -347,7 +443,7 @@ async function getRankingDataIndexedDB(subject = null) {
   });
 }
 
-// ─── Firebase ───────────────────────────────────────────────────────────────
+// ─── Firebase implementations ────────────────────────────────────────────────
 
 async function clearSubjectDataFirebase(subject) {
   try {
@@ -381,7 +477,6 @@ async function saveExamDataFirebase(subject, questions, answers) {
   try {
     await clearSubjectDataFirebase(subject);
 
-    // Firestore batch limit = 500 operasi; split jika soal banyak
     const BATCH_SIZE = 200;
     for (let start = 0; start < questions.length; start += BATCH_SIZE) {
       const batch = firebaseDb.batch();
@@ -392,11 +487,14 @@ async function saveExamDataFirebase(subject, questions, answers) {
         batch.set(qRef, {
           subject,
           indexId: index,
-          text: q.text,
+          text: q.text || '',
           options: q.options || [],
-          type: q.type,
+          type: q.type || 'free',
           difficulty: q.difficulty || '',
-          image: q.image || null
+          // PENTING: Tidak simpan field image ke Firestore.
+          // hasImage = true berarti gambar ada di IDB lokal.
+          hasImage: q.hasImage || false,
+          image: null
         });
         const answerVal = (answers && answers[`q${index}`] !== undefined)
           ? answers[`q${index}`]
@@ -431,8 +529,6 @@ async function getQuestionsFirebase(subject) {
   try {
     let docs;
     if (subject) {
-      // PENTING: hapus .orderBy() agar tidak perlu composite index di Firestore
-      // Urutkan di sisi client setelah fetch
       const snapshot = await questionsCollection().where('subject', '==', subject).get();
       docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       docs.sort((a, b) => (a.indexId || 0) - (b.indexId || 0));
@@ -503,7 +599,6 @@ async function clearAllResultsFirebase() {
   try {
     const snapshot = await resultsCollection().get();
     if (snapshot.empty) return;
-    // Hapus dalam batch (maks 500)
     const BATCH_SIZE = 400;
     const docs = snapshot.docs;
     for (let start = 0; start < docs.length; start += BATCH_SIZE) {
