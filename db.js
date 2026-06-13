@@ -76,6 +76,143 @@ async function waitForFirebase() {
 function questionsCollection() { return firebaseDb.collection('questions'); }
 function answersCollection()  { return firebaseDb.collection('answers'); }
 function resultsCollection()  { return firebaseDb.collection('results'); }
+// ─────────────────────────────────────────────────────────────────────────────
+// PENYIMPANAN GAMBAR KE FIRESTORE (collection 'question_images')
+// Gambar dikompres via canvas, lalu jika masih besar dipecah ke chunks.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function imagesCollection() { return firebaseDb.collection('question_images'); }
+
+const FB_IMG_CHUNK_SIZE = 700 * 1024; // 700 KB per chunk (panjang string base64)
+
+/** Kompres gambar base64 via canvas browser */
+async function compressImageDataUri(dataUri, maxWidth = 900, quality = 0.7) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const result = canvas.toDataURL('image/jpeg', quality);
+      resolve(result);
+    };
+    img.onerror = () => resolve(dataUri);
+    img.src = dataUri;
+  });
+}
+
+/** Simpan gambar ke Firestore — kompres dulu, lalu chunk jika perlu */
+async function saveImageToFirestore(subject, indexId, dataUri) {
+  if (!dataUri) return;
+  const safeKey = `${subject.replace(/[^a-zA-Z0-9]/g, '_')}_img_${indexId}`;
+  try {
+    const compressed = await compressImageDataUri(dataUri, 900, 0.65);
+    const bytes = compressed.length;
+    if (bytes <= FB_IMG_CHUNK_SIZE) {
+      // Ukuran aman — simpan langsung
+      await imagesCollection().doc(safeKey).set({
+        subject, indexId,
+        dataUri: compressed,
+        chunks: 1,
+        updatedAt: Date.now()
+      });
+    } else {
+      // Pecah ke chunks
+      const totalChunks = Math.ceil(bytes / FB_IMG_CHUNK_SIZE);
+      const batch = firebaseDb.batch();
+      batch.set(imagesCollection().doc(safeKey), {
+        subject, indexId, chunks: totalChunks, updatedAt: Date.now()
+      });
+      for (let c = 0; c < totalChunks; c++) {
+        const chunkData = compressed.slice(c * FB_IMG_CHUNK_SIZE, (c + 1) * FB_IMG_CHUNK_SIZE);
+        batch.set(imagesCollection().doc(`${safeKey}_c${c}`), {
+          parentKey: safeKey, chunkIndex: c, data: chunkData
+        });
+      }
+      await batch.commit();
+    }
+    // Simpan juga ke IDB lokal sebagai cache
+    await saveImageToIDB(subject, indexId, compressed).catch(() => {});
+  } catch (err) {
+    console.warn('saveImageToFirestore gagal, fallback ke IDB:', err);
+    await saveImageToIDB(subject, indexId, dataUri).catch(() => {});
+  }
+}
+
+/** Ambil gambar dari Firestore (coba cache IDB dulu) */
+async function getImageFromFirestore(subject, indexId) {
+  // 1. Coba dari cache IDB lokal dulu (lebih cepat)
+  try {
+    const cached = await getImageFromIDB(subject, indexId);
+    if (cached) return cached;
+  } catch (_) {}
+
+  // 2. Ambil dari Firestore
+  const safeKey = `${subject.replace(/[^a-zA-Z0-9]/g, '_')}_img_${indexId}`;
+  try {
+    const doc = await imagesCollection().doc(safeKey).get();
+    if (!doc.exists) return null;
+    const data = doc.data();
+    let dataUri = null;
+    if (data.chunks === 1 && data.dataUri) {
+      dataUri = data.dataUri;
+    } else if (data.chunks > 1) {
+      const parts = [];
+      for (let c = 0; c < data.chunks; c++) {
+        const chunkDoc = await imagesCollection().doc(`${safeKey}_c${c}`).get();
+        if (chunkDoc.exists) parts.push(chunkDoc.data().data);
+      }
+      dataUri = parts.join('');
+    }
+    // Simpan ke IDB lokal sebagai cache untuk request berikutnya
+    if (dataUri) await saveImageToIDB(subject, indexId, dataUri).catch(() => {});
+    return dataUri;
+  } catch (err) {
+    console.warn('getImageFromFirestore gagal:', err);
+    return null;
+  }
+}
+
+/** Hapus gambar satu subject dari Firestore */
+async function clearImagesForSubjectFirestore(subject) {
+  try {
+    const snapshot = await imagesCollection().where('subject', '==', subject).get();
+    if (snapshot.empty) return;
+    const BATCH = 400;
+    const docs = snapshot.docs;
+    for (let i = 0; i < docs.length; i += BATCH) {
+      const batch = firebaseDb.batch();
+      for (const doc of docs.slice(i, i + BATCH)) {
+        batch.delete(doc.ref);
+        const d = doc.data();
+        if (d.chunks > 1) {
+          for (let c = 0; c < d.chunks; c++)
+            batch.delete(imagesCollection().doc(`${doc.id}_c${c}`));
+        }
+      }
+      await batch.commit();
+    }
+  } catch (err) { console.warn('clearImagesForSubjectFirestore:', err); }
+}
+
+/** Hapus semua gambar dari Firestore */
+async function clearAllImagesFirestore() {
+  try {
+    const snapshot = await imagesCollection().get();
+    if (snapshot.empty) return;
+    const BATCH = 400;
+    const docs = snapshot.docs;
+    for (let i = 0; i < docs.length; i += BATCH) {
+      const batch = firebaseDb.batch();
+      docs.slice(i, i + BATCH).forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+  } catch (err) { console.warn('clearAllImagesFirestore:', err); }
+}
+
+
 
 function safeDocId(subject, index, suffix = '') {
   return `${subject.replace(/[^a-zA-Z0-9]/g, '_')}_${index}${suffix}`;
@@ -169,26 +306,35 @@ async function clearAllImagesIDB() {
 async function saveExamData(subject, questions, answers) {
   const useFirebase = await waitForFirebase();
 
-  // 1. Pisahkan gambar dari objek soal sebelum disimpan ke Firebase/IDB utama
-  const questionsWithoutImage = questions.map((q, index) => {
+  // 1. Pisahkan gambar dari metadata soal
+  const questionsWithoutImage = questions.map((q) => {
     const { image, ...rest } = q;
     return { ...rest, hasImage: !!image };
   });
 
-  // 2. Simpan gambar ke IDB lokal (selalu, terlepas Firebase/IDB)
-  await clearImagesForSubjectIDB(subject);
-  for (let i = 0; i < questions.length; i++) {
-    if (questions[i].image) {
-      await saveImageToIDB(subject, i, questions[i].image);
-    }
-  }
-
-  // 3. Simpan data soal (tanpa gambar) ke Firebase atau IDB
   if (useFirebase) {
+    // 2a. Firebase: simpan gambar ke Firestore collection 'question_images'
+    //     (dikompres + di-chunk jika perlu) + simpan IDB sebagai cache
+    await clearImagesForSubjectFirestore(subject).catch(() => {});
+    await clearImagesForSubjectIDB(subject).catch(() => {});
+    const imgSavePromises = [];
+    for (let i = 0; i < questions.length; i++) {
+      if (questions[i].image) {
+        imgSavePromises.push(saveImageToFirestore(subject, i, questions[i].image));
+      }
+    }
+    await Promise.all(imgSavePromises);
     return saveExamDataFirebase(subject, questionsWithoutImage, answers);
+  } else {
+    // 2b. Offline: simpan ke IDB dengan gambar lengkap
+    await clearImagesForSubjectIDB(subject).catch(() => {});
+    for (let i = 0; i < questions.length; i++) {
+      if (questions[i].image) {
+        await saveImageToIDB(subject, i, questions[i].image).catch(() => {});
+      }
+    }
+    return saveExamDataIndexedDB(subject, questions, answers);
   }
-  // Untuk IDB, simpan juga dengan gambar agar offline tetap bekerja
-  return saveExamDataIndexedDB(subject, questions, answers);
 }
 
 async function clearSubjectData(subject) {
@@ -196,7 +342,10 @@ async function clearSubjectData(subject) {
   const tasks = [];
   tasks.push(clearSubjectDataIndexedDB(subject).catch(e => console.warn('clearSubjectData IDB:', e)));
   tasks.push(clearImagesForSubjectIDB(subject).catch(e => console.warn('clearImages IDB:', e)));
-  if (useFirebase) tasks.push(clearSubjectDataFirebase(subject).catch(e => console.warn('clearSubjectData FB:', e)));
+  if (useFirebase) {
+    tasks.push(clearSubjectDataFirebase(subject).catch(e => console.warn('clearSubjectData FB:', e)));
+    tasks.push(clearImagesForSubjectFirestore(subject).catch(e => console.warn('clearImages FB:', e)));
+  }
   return Promise.all(tasks);
 }
 
@@ -205,7 +354,10 @@ async function clearExamData() {
   const tasks = [];
   tasks.push(clearExamDataIndexedDB().catch(e => console.warn('clearExamData IDB:', e)));
   tasks.push(clearAllImagesIDB().catch(e => console.warn('clearImages IDB:', e)));
-  if (useFirebase) tasks.push(clearExamDataFirebase().catch(e => console.warn('clearExamData FB:', e)));
+  if (useFirebase) {
+    tasks.push(clearExamDataFirebase().catch(e => console.warn('clearExamData FB:', e)));
+    tasks.push(clearAllImagesFirestore().catch(e => console.warn('clearImages FB:', e)));
+  }
   return Promise.all(tasks);
 }
 
@@ -225,12 +377,19 @@ async function getQuestions(subject) {
     questions = await getQuestionsIndexedDB(subject);
   }
 
-  // Inject gambar dari IDB lokal ke tiap soal
+  // Inject gambar: gunakan Firestore (jika Firebase aktif) atau IDB lokal
+  const fbActive = await waitForFirebase();
   for (const q of questions) {
     const subj = q.subject || subject;
     const idx  = (typeof q.indexId !== 'undefined') ? q.indexId : 0;
     if (q.hasImage || q.image) {
-      const img = await getImageFromIDB(subj, idx);
+      let img = null;
+      if (fbActive) {
+        img = await getImageFromFirestore(subj, idx);
+      }
+      if (!img) {
+        img = await getImageFromIDB(subj, idx).catch(() => null);
+      }
       if (img) q.image = img;
     }
   }
