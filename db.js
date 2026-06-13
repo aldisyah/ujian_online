@@ -97,6 +97,8 @@ async function syncLocalToFirebase() {
     const clearedAt = parseInt(localStorage.getItem('cleared_results_at') || '0', 10);
     const localResults = await getAllResultsIndexedDB();
     for (const r of localResults) {
+      // skip already uploaded local records
+      if (r.uploaded) continue;
       // if admin recently cleared results, skip uploading older entries
       if (clearedAt && (!r.createdAt || r.createdAt <= clearedAt)) continue;
       await saveStudentResultFirebase(r.name, r.subject, r.answers, r.score, r.total, r.createdAt);
@@ -366,24 +368,41 @@ async function getCorrectAnswersIndexedDB(subject) {
   });
 }
 
-async function saveStudentResultIndexedDB(name, subject, userAnswers, score, total) {
+async function saveStudentResultIndexedDB(name, subject, userAnswers, score, total, createdAt = null, uploaded = false) {
+  // New signature: saveStudentResultIndexedDB(name, subject, userAnswers, score, total, createdAt=null, uploaded=false)
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(['results'], 'readwrite');
     const store = transaction.objectStore('results');
-    const now = Date.now();
+    const now = createdAt || Date.now();
     const resultRecord = {
       name: name,
       subject: subject || 'Umum',
       answers: userAnswers,
       score: score,
       total: total,
-      timestamp: new Date().toLocaleString('id-ID'),
-      createdAt: now
+      timestamp: new Date(now).toLocaleString('id-ID'),
+      createdAt: now,
+      uploaded: !!arguments[6]
     };
-    const request = store.add(resultRecord);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = (err) => reject(err);
+
+    // Try to find an existing record with same createdAt/name/subject to avoid duplicates
+    const getAllReq = store.getAll();
+    getAllReq.onsuccess = () => {
+      const existing = getAllReq.result.find(r => r.createdAt === resultRecord.createdAt && r.name === resultRecord.name && r.subject === resultRecord.subject);
+      if (existing) {
+        // update existing record
+        const updated = Object.assign({}, existing, resultRecord);
+        const putReq = store.put(updated);
+        putReq.onsuccess = () => resolve(putReq.result || existing.id);
+        putReq.onerror = (err) => reject(err);
+      } else {
+        const addReq = store.add(resultRecord);
+        addReq.onsuccess = () => resolve(addReq.result);
+        addReq.onerror = (err) => reject(err);
+      }
+    };
+    getAllReq.onerror = (err) => reject(err);
   });
 }
 
@@ -496,6 +515,12 @@ async function saveExamDataFirebase(subject, questions, answers) {
     });
 
     await batch.commit();
+    // Also persist a local copy so clients that load before Firebase init can render questions
+    try {
+      await saveExamDataIndexedDB(subject, questions, answers);
+    } catch (err) {
+      console.warn('Saving exam data locally after Firebase commit failed:', err);
+    }
   } catch (err) {
     console.warn('saveExamDataFirebase failed, saving to IndexedDB instead:', err);
     return saveExamDataIndexedDB(subject, questions, answers);
@@ -571,6 +596,12 @@ async function saveStudentResultFirebase(name, subject, userAnswers, score, tota
     resultRecord.createdAt = createdAtValue;
     const resultDocId = safeResultDocId(name, subject, createdAtValue);
     await resultsCollection().doc(resultDocId).set(resultRecord);
+    // Ensure a local copy exists and mark it uploaded to avoid re-upload on sync
+    try {
+      await saveStudentResultIndexedDB(name, subject, userAnswers, score, total, createdAtValue, true);
+    } catch (err) {
+      console.warn('Saving student result locally after Firebase set failed:', err);
+    }
   } catch (err) {
     console.warn('saveStudentResultFirebase failed, saving to IndexedDB instead:', err);
     return saveStudentResultIndexedDB(name, subject, userAnswers, score, total);
