@@ -8,7 +8,8 @@ function htmlToLines(html) {
   const images = temp.getElementsByTagName('img');
   for (let i = images.length - 1; i >= 0; i--) {
     const img = images[i];
-    const markerText = `[[IMG:${img.src}]]`;
+    // Beri newline sebelum dan sesudah marker agar selalu di baris sendiri
+    const markerText = `\n[[IMG:${img.src}]]\n`;
     const markerNode = document.createTextNode(markerText);
     img.parentNode.insertBefore(markerNode, img);
     img.parentNode.removeChild(img);
@@ -41,6 +42,20 @@ function extractKeysFromText(text, answers) {
 }
 
 /**
+ * Ekstrak marker gambar dari dalam teks, kembalikan { text, imageUri }
+ * Menangani kasus gambar embedded di tengah teks soal.
+ */
+function extractImgFromText(text) {
+  const imgRe = /\[\[IMG:(data:[^[\]]+)\]\]/gi;
+  let imageUri = null;
+  const cleanText = text.replace(imgRe, (match, uri) => {
+    if (!imageUri) imageUri = uri.trim();
+    return '';
+  }).replace(/\s{2,}/g, ' ').trim();
+  return { text: cleanText, imageUri };
+}
+
+/**
  * Parser utama: mengubah array lines hasil htmlToLines() menjadi { questions, answers }
  * Mendukung dua format soal di Word:
  *   Format A (list/ol/ul) — ditangani parseDocxHtml terlebih dahulu
@@ -62,11 +77,12 @@ function parseDocxLines(lines) {
     const line = lines[i].trim();
     if (!line) continue;
 
-    // --- Gambar inline ---
-    const imgMatch = line.match(/^\[\[IMG:(.+?)\]\]$/i);
+    // --- Gambar inline (baris murni marker, setelah newline dipisah di htmlToLines) ---
+    const imgMatch = line.match(/^\[\[IMG:(data:[^[\]]+)\]\]$/i);
     if (imgMatch) {
-      if (currentQuestion) currentQuestion.image = imgMatch[1].trim();
-      else pendingImage = imgMatch[1].trim();
+      const uri = imgMatch[1].trim();
+      if (currentQuestion && !currentQuestion.image) currentQuestion.image = uri;
+      else if (!currentQuestion) pendingImage = uri;
       continue;
     }
 
@@ -116,13 +132,18 @@ function parseDocxLines(lines) {
         qText = qText.substring(diffMatch[0].length).trim();
       }
 
+      // Bersihkan marker gambar yang mungkin ikut dalam teks soal
+      const qExtracted = extractImgFromText(qText);
+      qText = qExtracted.text;
+      const qInlineImg = qExtracted.imageUri;
+
       currentQuestion = {
         id: qNum,
         text: qText,
         type: 'free',
         options: [],
         difficulty: difficulty,
-        image: pendingImage || null
+        image: qInlineImg || pendingImage || null
       };
       pendingImage = null;
       questions.push(currentQuestion);
@@ -144,7 +165,13 @@ function parseDocxLines(lines) {
 
     // --- Lanjutan teks soal (baris tanpa pola khusus) ---
     if (currentQuestion && currentQuestion.options.length === 0) {
-      currentQuestion.text += ' ' + line;
+      const contExtracted = extractImgFromText(line);
+      if (contExtracted.imageUri && !currentQuestion.image) {
+        currentQuestion.image = contExtracted.imageUri;
+      }
+      if (contExtracted.text) {
+        currentQuestion.text += ' ' + contExtracted.text;
+      }
     }
   }
 
