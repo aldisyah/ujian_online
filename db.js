@@ -120,6 +120,13 @@ function safeDocId(subject, index, suffix = '') {
   return `${subject.replace(/\s+/g, '_')}_${index}${suffix}`;
 }
 
+function safeResultDocId(name, subject, createdAt) {
+  const normalizedName = String(name || 'siswa').trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '');
+  const normalizedSubject = String(subject || 'Umum').trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '');
+  const timestamp = String(createdAt || Date.now());
+  return `${normalizedSubject}_${normalizedName}_${timestamp}`;
+}
+
 async function saveExamData(subject, questions, answers) {
   if (isFirebaseEnabled()) return saveExamDataFirebase(subject, questions, answers);
   return saveExamDataIndexedDB(subject, questions, answers);
@@ -557,8 +564,10 @@ async function saveStudentResultFirebase(name, subject, userAnswers, score, tota
       total: total,
       timestamp: new Date().toLocaleString('id-ID')
     };
-    if (createdAt) resultRecord.createdAt = createdAt;
-    await resultsCollection().add(resultRecord);
+    const createdAtValue = createdAt || Date.now();
+    resultRecord.createdAt = createdAtValue;
+    const resultDocId = safeResultDocId(name, subject, createdAtValue);
+    await resultsCollection().doc(resultDocId).set(resultRecord);
   } catch (err) {
     console.warn('saveStudentResultFirebase failed, saving to IndexedDB instead:', err);
     return saveStudentResultIndexedDB(name, subject, userAnswers, score, total);
