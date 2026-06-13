@@ -1,6 +1,4 @@
 // db.js - Database helper for Olimpiade Annur
-// This app can use Firebase Firestore to store soal and hasil secara remote.
-// Jika Firebase belum dikonfigurasi, modul akan jatuh kembali ke IndexedDB lokal.
 
 let USE_FIREBASE_REMOTE = true;
 const FIREBASE_CONFIG = {
@@ -15,10 +13,10 @@ const FIREBASE_CONFIG = {
 
 let firebaseInitialized = false;
 let firebaseDb = null;
+// Promise yang di-resolve setelah Firebase berhasil init (atau gagal)
+let firebaseReadyPromise = null;
+let firebaseReadyResolve = null;
 
-// Allow overriding Firebase config from a separate `firebase-config.js` file.
-// If you create `firebase-config.js`, set `window.FIREBASE_CONFIG = { ... }` and
-// optionally `window.USE_FIREBASE_REMOTE = true` to enable remote DB.
 if (typeof window !== 'undefined' && window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.apiKey) {
   try {
     Object.assign(FIREBASE_CONFIG, window.FIREBASE_CONFIG);
@@ -30,48 +28,36 @@ if (typeof window !== 'undefined' && window.FIREBASE_CONFIG && window.FIREBASE_C
   }
 }
 
+// Buat promise yang bisa di-await oleh caller untuk menunggu Firebase siap
+firebaseReadyPromise = new Promise((resolve) => {
+  firebaseReadyResolve = resolve;
+});
+
 function initFirebase() {
   if (!USE_FIREBASE_REMOTE || firebaseInitialized) return;
   const hasPlaceholderConfig = FIREBASE_CONFIG.apiKey.startsWith('REPLACE_') || FIREBASE_CONFIG.projectId.startsWith('REPLACE_');
-  if (hasPlaceholderConfig) return;
+  if (hasPlaceholderConfig) {
+    firebaseReadyResolve(false);
+    return;
+  }
 
-  // Try to initialize Firebase with retries in case SDK is still loading
   let attempts = 0;
-  const maxAttempts = 6;
-  const tryInit = async () => {
+  const maxAttempts = 8;
+  const tryInit = () => {
     attempts++;
     try {
       if (typeof firebase === 'undefined') throw new Error('Firebase SDK not loaded');
-      if (!firebase.apps || !Array.isArray(firebase.apps)) {
-        // compat build exposes firebase.apps as object/array; allow initialization
-      }
-          firebase.initializeApp(FIREBASE_CONFIG);
+      firebase.initializeApp(FIREBASE_CONFIG);
       firebaseDb = firebase.firestore();
       firebaseInitialized = true;
-
-      // If there was an admin clear before Firebase became available,
-      // make sure remote results are cleared before any local sync occurs.
-      const clearedAt = parseInt(localStorage.getItem('cleared_results_at') || '0', 10);
-      if (clearedAt) {
-        try {
-          await clearAllResultsFirebase();
-          try { localStorage.removeItem('cleared_results_at'); } catch (e) { /* ignore */ }
-        } catch (err) {
-          console.warn('Pending remote clear failed:', err);
-        }
-      }
-
-      // After successful init (and any pending clear), sync any local data to remote
-      try {
-        await syncLocalToFirebase();
-      } catch (err) {
-        console.warn('Sync to Firebase failed:', err);
-      }
+      console.info('Firebase initialized successfully');
+      firebaseReadyResolve(true);
     } catch (err) {
       if (attempts < maxAttempts) {
-        setTimeout(tryInit, 800 * attempts);
+        setTimeout(tryInit, 600 * attempts);
       } else {
-        console.warn('Firebase init failed:', err.message || err);
+        console.warn('Firebase init failed after', maxAttempts, 'attempts:', err.message || err);
+        firebaseReadyResolve(false);
       }
     }
   };
@@ -79,34 +65,13 @@ function initFirebase() {
 }
 
 function isFirebaseEnabled() {
-  initFirebase();
   return firebaseInitialized;
 }
 
-// If Firebase becomes available later, upload local IndexedDB data so other devices can see it.
-async function syncLocalToFirebase() {
-  if (!isFirebaseEnabled()) return;
-  try {
-    const subjects = await getAvailableSubjectsIndexedDB();
-    for (const subj of subjects) {
-      const qs = await getQuestionsIndexedDB(subj);
-      const ans = await getCorrectAnswersIndexedDB(subj);
-      await saveExamDataFirebase(subj, qs, ans);
-    }
-    // Also upload results if any, but skip those created before the last admin clear
-    const clearedAt = parseInt(localStorage.getItem('cleared_results_at') || '0', 10);
-    const localResults = await getAllResultsIndexedDB();
-    for (const r of localResults) {
-      // skip already uploaded local records
-      if (r.uploaded) continue;
-      // if admin recently cleared results, skip uploading older entries
-      if (clearedAt && (!r.createdAt || r.createdAt <= clearedAt)) continue;
-      await saveStudentResultFirebase(r.name, r.subject, r.answers, r.score, r.total, r.createdAt);
-    }
-    console.info('Local IndexedDB synced to Firebase');
-  } catch (err) {
-    console.warn('Error syncing local DB to Firebase:', err);
-  }
+// Tunggu sampai Firebase siap (atau gagal), lalu tentukan pakai Firebase atau IndexedDB
+async function waitForFirebase() {
+  await firebaseReadyPromise;
+  return firebaseInitialized;
 }
 
 function questionsCollection() {
@@ -122,124 +87,88 @@ function resultsCollection() {
 }
 
 function safeDocId(subject, index, suffix = '') {
-  return `${subject.replace(/\s+/g, '_')}_${index}${suffix}`;
-}
-
-function safeResultDocId(name, subject, createdAt) {
-  const normalizedName = String(name || 'siswa').trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '');
-  const normalizedSubject = String(subject || 'Umum').trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '');
-  const timestamp = String(createdAt || Date.now());
-  return `${normalizedSubject}_${normalizedName}_${timestamp}`;
+  return `${subject.replace(/[^a-zA-Z0-9]/g, '_')}_${index}${suffix}`;
 }
 
 async function saveExamData(subject, questions, answers) {
-  if (isFirebaseEnabled()) return saveExamDataFirebase(subject, questions, answers);
+  const useFirebase = await waitForFirebase();
+  if (useFirebase) return saveExamDataFirebase(subject, questions, answers);
   return saveExamDataIndexedDB(subject, questions, answers);
 }
 
 async function clearSubjectData(subject) {
-  // Ensure deletion occurs both locally and remotely to avoid re-syncing local copies
+  const useFirebase = await waitForFirebase();
   const tasks = [];
-  try {
-    tasks.push(clearSubjectDataIndexedDB(subject));
-  } catch (e) {
-    console.warn('clearSubjectData: failed to clear IndexedDB', e);
-  }
-  if (isFirebaseEnabled()) {
-    try {
-      tasks.push(clearSubjectDataFirebase(subject));
-    } catch (e) {
-      console.warn('clearSubjectData: failed to clear Firebase', e);
-    }
-  }
+  tasks.push(clearSubjectDataIndexedDB(subject).catch(e => console.warn('clearSubjectData IDB:', e)));
+  if (useFirebase) tasks.push(clearSubjectDataFirebase(subject).catch(e => console.warn('clearSubjectData FB:', e)));
   return Promise.all(tasks);
 }
 
 async function clearExamData() {
-  // Delete all exam data both locally and remotely to avoid re-sync
+  const useFirebase = await waitForFirebase();
   const tasks = [];
-  try {
-    tasks.push(clearExamDataIndexedDB());
-  } catch (e) {
-    console.warn('clearExamData: failed to clear IndexedDB', e);
-  }
-  if (isFirebaseEnabled()) {
-    try {
-      tasks.push(clearExamDataFirebase());
-    } catch (e) {
-      console.warn('clearExamData: failed to clear Firebase', e);
-    }
-  }
+  tasks.push(clearExamDataIndexedDB().catch(e => console.warn('clearExamData IDB:', e)));
+  if (useFirebase) tasks.push(clearExamDataFirebase().catch(e => console.warn('clearExamData FB:', e)));
   return Promise.all(tasks);
 }
 
 async function getAvailableSubjects() {
-  if (isFirebaseEnabled()) return getAvailableSubjectsFirebase();
+  const useFirebase = await waitForFirebase();
+  if (useFirebase) return getAvailableSubjectsFirebase();
   return getAvailableSubjectsIndexedDB();
 }
 
 async function getQuestions(subject) {
-  if (isFirebaseEnabled()) return getQuestionsFirebase(subject);
+  const useFirebase = await waitForFirebase();
+  if (useFirebase) return getQuestionsFirebase(subject);
   return getQuestionsIndexedDB(subject);
 }
 
 async function getCorrectAnswers(subject) {
-  if (isFirebaseEnabled()) return getCorrectAnswersFirebase(subject);
+  const useFirebase = await waitForFirebase();
+  if (useFirebase) return getCorrectAnswersFirebase(subject);
   return getCorrectAnswersIndexedDB(subject);
 }
 
 async function saveStudentResult(name, subject, userAnswers, score, total) {
-  if (isFirebaseEnabled()) return saveStudentResultFirebase(name, subject, userAnswers, score, total);
+  const useFirebase = await waitForFirebase();
+  if (useFirebase) return saveStudentResultFirebase(name, subject, userAnswers, score, total);
   return saveStudentResultIndexedDB(name, subject, userAnswers, score, total);
 }
 
 async function getAllResults() {
-  if (isFirebaseEnabled()) return getAllResultsFirebase();
+  const useFirebase = await waitForFirebase();
+  if (useFirebase) return getAllResultsFirebase();
   return getAllResultsIndexedDB();
 }
 
 async function clearAllResults() {
-  // Ensure we clear results both locally and remotely to avoid re-sync
+  const useFirebase = await waitForFirebase();
+  // Hapus dari kedua storage sekaligus agar tidak ada sisa data yang ter-reload
   const tasks = [];
-  try {
-    tasks.push(clearAllResultsIndexedDB());
-  } catch (e) {
-    console.warn('clearAllResults: failed to clear IndexedDB', e);
-  }
-  if (isFirebaseEnabled()) {
-    try {
-      tasks.push(clearAllResultsFirebase());
-    } catch (e) {
-      console.warn('clearAllResults: failed to clear Firebase', e);
-    }
-  }
+  tasks.push(clearAllResultsIndexedDB().catch(e => console.warn('clearAllResults IDB:', e)));
+  if (useFirebase) tasks.push(clearAllResultsFirebase().catch(e => console.warn('clearAllResults FB:', e)));
   return Promise.all(tasks);
 }
 
 async function getRankingData(subject = null) {
-  if (isFirebaseEnabled()) return getRankingDataFirebase(subject);
+  const useFirebase = await waitForFirebase();
+  if (useFirebase) return getRankingDataFirebase(subject);
   return getRankingDataIndexedDB(subject);
 }
+
+// ─── IndexedDB ──────────────────────────────────────────────────────────────
 
 function openDB() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open('OlimpiadeAnnurDB', 3);
-
-    request.onerror = (event) => {
-      reject('Gagal membuka database: ' + event.target.error);
-    };
-
-    request.onsuccess = (event) => {
-      resolve(event.target.result);
-    };
-
+    request.onerror = (event) => reject('Gagal membuka database: ' + event.target.error);
+    request.onsuccess = (event) => resolve(event.target.result);
     request.onupgradeneeded = (event) => {
       const db = event.target.result;
-      
       if (db.objectStoreNames.contains('questions')) db.deleteObjectStore('questions');
       if (db.objectStoreNames.contains('answers')) db.deleteObjectStore('answers');
       if (db.objectStoreNames.contains('results')) db.deleteObjectStore('results');
-
       db.createObjectStore('questions', { keyPath: 'id', autoIncrement: true });
       db.createObjectStore('answers', { keyPath: 'id', autoIncrement: true });
       db.createObjectStore('results', { keyPath: 'id', autoIncrement: true });
@@ -247,32 +176,22 @@ function openDB() {
   });
 }
 
-// IndexedDB fallback implementation
 async function clearSubjectDataIndexedDB(subject) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(['questions', 'answers'], 'readwrite');
     const qStore = transaction.objectStore('questions');
     const aStore = transaction.objectStore('answers');
-
     const qReq = qStore.openCursor();
     qReq.onsuccess = (e) => {
       const cursor = e.target.result;
-      if (cursor) {
-        if (cursor.value.subject === subject) cursor.delete();
-        cursor.continue();
-      }
+      if (cursor) { if (cursor.value.subject === subject) cursor.delete(); cursor.continue(); }
     };
-
     const aReq = aStore.openCursor();
     aReq.onsuccess = (e) => {
       const cursor = e.target.result;
-      if (cursor) {
-        if (cursor.value.subject === subject) cursor.delete();
-        cursor.continue();
-      }
+      if (cursor) { if (cursor.value.subject === subject) cursor.delete(); cursor.continue(); }
     };
-
     transaction.oncomplete = () => resolve();
     transaction.onerror = (err) => reject(err);
   });
@@ -296,19 +215,15 @@ async function saveExamDataIndexedDB(subject, questions, answers) {
     const transaction = db.transaction(['questions', 'answers'], 'readwrite');
     const qStore = transaction.objectStore('questions');
     const aStore = transaction.objectStore('answers');
-
     questions.forEach((q, index) => {
       const qRecord = { ...q, subject: subject, indexId: index };
       delete qRecord.id;
       qStore.put(qRecord);
-      
       const answerVal = (answers && answers[`q${index}`] !== undefined)
         ? answers[`q${index}`]
         : (answers && answers[index] !== undefined ? answers[index] : '');
-      
       aStore.put({ subject: subject, indexId: index, answer: answerVal });
     });
-
     transaction.oncomplete = () => resolve();
     transaction.onerror = (err) => reject(err);
   });
@@ -322,9 +237,7 @@ async function getAvailableSubjectsIndexedDB() {
     const request = store.getAll();
     request.onsuccess = () => {
       const subjects = new Set();
-      request.result.forEach(q => {
-        if (q.subject) subjects.add(q.subject);
-      });
+      request.result.forEach(q => { if (q.subject) subjects.add(q.subject); });
       resolve(Array.from(subjects));
     };
     request.onerror = (err) => reject(err);
@@ -359,50 +272,31 @@ async function getCorrectAnswersIndexedDB(subject) {
     request.onsuccess = () => {
       const resultObj = {};
       const items = subject ? request.result.filter(a => a.subject === subject) : request.result;
-      items.forEach(item => {
-        resultObj[`q${item.indexId}`] = item.answer;
-      });
+      items.forEach(item => { resultObj[`q${item.indexId}`] = item.answer; });
       resolve(resultObj);
     };
     request.onerror = (err) => reject(err);
   });
 }
 
-async function saveStudentResultIndexedDB(name, subject, userAnswers, score, total, createdAt = null, uploaded = false) {
-  // New signature: saveStudentResultIndexedDB(name, subject, userAnswers, score, total, createdAt=null, uploaded=false)
+async function saveStudentResultIndexedDB(name, subject, userAnswers, score, total) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(['results'], 'readwrite');
     const store = transaction.objectStore('results');
-    const now = createdAt || Date.now();
+    const now = Date.now();
     const resultRecord = {
       name: name,
       subject: subject || 'Umum',
       answers: userAnswers,
       score: score,
       total: total,
-      timestamp: new Date(now).toLocaleString('id-ID'),
-      createdAt: now,
-      uploaded: !!arguments[6]
+      timestamp: new Date().toLocaleString('id-ID'),
+      createdAt: now
     };
-
-    // Try to find an existing record with same createdAt/name/subject to avoid duplicates
-    const getAllReq = store.getAll();
-    getAllReq.onsuccess = () => {
-      const existing = getAllReq.result.find(r => r.createdAt === resultRecord.createdAt && r.name === resultRecord.name && r.subject === resultRecord.subject);
-      if (existing) {
-        // update existing record
-        const updated = Object.assign({}, existing, resultRecord);
-        const putReq = store.put(updated);
-        putReq.onsuccess = () => resolve(putReq.result || existing.id);
-        putReq.onerror = (err) => reject(err);
-      } else {
-        const addReq = store.add(resultRecord);
-        addReq.onsuccess = () => resolve(addReq.result);
-        addReq.onerror = (err) => reject(err);
-      }
-    };
-    getAllReq.onerror = (err) => reject(err);
+    const request = store.add(resultRecord);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = (err) => reject(err);
   });
 }
 
@@ -436,9 +330,7 @@ async function getRankingDataIndexedDB(subject = null) {
     const request = store.getAll();
     request.onsuccess = () => {
       let results = request.result;
-      if (subject) {
-        results = results.filter(r => r.subject === subject);
-      }
+      if (subject) results = results.filter(r => r.subject === subject);
       results.sort((a, b) => b.score - a.score);
       const ranking = results.map((result, index) => ({
         rank: index + 1,
@@ -455,7 +347,8 @@ async function getRankingDataIndexedDB(subject = null) {
   });
 }
 
-// Firebase remote implementation
+// ─── Firebase ───────────────────────────────────────────────────────────────
+
 async function clearSubjectDataFirebase(subject) {
   try {
     const batch = firebaseDb.batch();
@@ -465,7 +358,7 @@ async function clearSubjectDataFirebase(subject) {
     aSnapshot.forEach(doc => batch.delete(doc.ref));
     await batch.commit();
   } catch (err) {
-    console.warn('clearSubjectDataFirebase failed, falling back to IndexedDB:', err);
+    console.warn('clearSubjectDataFirebase failed:', err);
     return clearSubjectDataIndexedDB(subject);
   }
 }
@@ -479,7 +372,7 @@ async function clearExamDataFirebase() {
     aSnapshot.forEach(doc => batch.delete(doc.ref));
     await batch.commit();
   } catch (err) {
-    console.warn('clearExamDataFirebase failed, falling back to IndexedDB:', err);
+    console.warn('clearExamDataFirebase failed:', err);
     return clearExamDataIndexedDB();
   }
 }
@@ -487,39 +380,31 @@ async function clearExamDataFirebase() {
 async function saveExamDataFirebase(subject, questions, answers) {
   try {
     await clearSubjectDataFirebase(subject);
-    const batch = firebaseDb.batch();
 
-    questions.forEach((q, index) => {
-      const qRef = questionsCollection().doc(safeDocId(subject, index));
-      batch.set(qRef, {
-        subject,
-        indexId: index,
-        text: q.text,
-        options: q.options || [],
-        type: q.type,
-        difficulty: q.difficulty || '',
-        // include image if present so clients can render question images
-        image: q.image || null
+    // Firestore batch limit = 500 operasi; split jika soal banyak
+    const BATCH_SIZE = 200;
+    for (let start = 0; start < questions.length; start += BATCH_SIZE) {
+      const batch = firebaseDb.batch();
+      const chunk = questions.slice(start, start + BATCH_SIZE);
+      chunk.forEach((q, i) => {
+        const index = start + i;
+        const qRef = questionsCollection().doc(safeDocId(subject, index));
+        batch.set(qRef, {
+          subject,
+          indexId: index,
+          text: q.text,
+          options: q.options || [],
+          type: q.type,
+          difficulty: q.difficulty || '',
+          image: q.image || null
+        });
+        const answerVal = (answers && answers[`q${index}`] !== undefined)
+          ? answers[`q${index}`]
+          : (answers && answers[index] !== undefined ? answers[index] : '');
+        const aRef = answersCollection().doc(safeDocId(subject, index, '_ans'));
+        batch.set(aRef, { subject, indexId: index, answer: answerVal });
       });
-
-      const answerVal = (answers && answers[`q${index}`] !== undefined)
-        ? answers[`q${index}`]
-        : (answers && answers[index] !== undefined ? answers[index] : '');
-
-      const aRef = answersCollection().doc(safeDocId(subject, index, '_ans'));
-      batch.set(aRef, {
-        subject,
-        indexId: index,
-        answer: answerVal
-      });
-    });
-
-    await batch.commit();
-    // Also persist a local copy so clients that load before Firebase init can render questions
-    try {
-      await saveExamDataIndexedDB(subject, questions, answers);
-    } catch (err) {
-      console.warn('Saving exam data locally after Firebase commit failed:', err);
+      await batch.commit();
     }
   } catch (err) {
     console.warn('saveExamDataFirebase failed, saving to IndexedDB instead:', err);
@@ -537,39 +422,43 @@ async function getAvailableSubjectsFirebase() {
     });
     return Array.from(subjects);
   } catch (err) {
-    console.warn('getAvailableSubjectsFirebase failed, using IndexedDB:', err);
+    console.warn('getAvailableSubjectsFirebase failed:', err);
     return getAvailableSubjectsIndexedDB();
   }
 }
 
 async function getQuestionsFirebase(subject) {
   try {
+    let docs;
     if (subject) {
-      const snapshot = await questionsCollection().where('subject', '==', subject).orderBy('indexId').get();
-      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // PENTING: hapus .orderBy() agar tidak perlu composite index di Firestore
+      // Urutkan di sisi client setelah fetch
+      const snapshot = await questionsCollection().where('subject', '==', subject).get();
+      docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      docs.sort((a, b) => (a.indexId || 0) - (b.indexId || 0));
+    } else {
+      const snapshot = await questionsCollection().get();
+      docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      docs.sort((a, b) => {
+        if (a.subject === b.subject) return (a.indexId || 0) - (b.indexId || 0);
+        return String(a.subject).localeCompare(String(b.subject));
+      });
     }
-
-    const snapshot = await questionsCollection().get();
-    const results = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    results.sort((a, b) => {
-      if (a.subject === b.subject) return (a.indexId || 0) - (b.indexId || 0);
-      return String(a.subject).localeCompare(String(b.subject));
-    });
-    return results;
+    return docs;
   } catch (err) {
-    console.warn('getQuestionsFirebase failed, using IndexedDB:', err);
+    console.warn('getQuestionsFirebase failed:', err);
     return getQuestionsIndexedDB(subject);
   }
 }
 
 async function getCorrectAnswersFirebase(subject) {
   try {
-    let query = answersCollection();
+    let snapshot;
     if (subject) {
-      query = query.where('subject', '==', subject);
+      snapshot = await answersCollection().where('subject', '==', subject).get();
+    } else {
+      snapshot = await answersCollection().get();
     }
-
-    const snapshot = await query.get();
     const resultObj = {};
     snapshot.docs.forEach(doc => {
       const data = doc.data();
@@ -577,12 +466,12 @@ async function getCorrectAnswersFirebase(subject) {
     });
     return resultObj;
   } catch (err) {
-    console.warn('getCorrectAnswersFirebase failed, using IndexedDB:', err);
+    console.warn('getCorrectAnswersFirebase failed:', err);
     return getCorrectAnswersIndexedDB(subject);
   }
 }
 
-async function saveStudentResultFirebase(name, subject, userAnswers, score, total, createdAt) {
+async function saveStudentResultFirebase(name, subject, userAnswers, score, total) {
   try {
     const resultRecord = {
       name: name,
@@ -590,20 +479,12 @@ async function saveStudentResultFirebase(name, subject, userAnswers, score, tota
       answers: userAnswers,
       score: score,
       total: total,
-      timestamp: new Date().toLocaleString('id-ID')
+      timestamp: new Date().toLocaleString('id-ID'),
+      createdAt: Date.now()
     };
-    const createdAtValue = createdAt || Date.now();
-    resultRecord.createdAt = createdAtValue;
-    const resultDocId = safeResultDocId(name, subject, createdAtValue);
-    await resultsCollection().doc(resultDocId).set(resultRecord);
-    // Ensure a local copy exists and mark it uploaded to avoid re-upload on sync
-    try {
-      await saveStudentResultIndexedDB(name, subject, userAnswers, score, total, createdAtValue, true);
-    } catch (err) {
-      console.warn('Saving student result locally after Firebase set failed:', err);
-    }
+    await resultsCollection().add(resultRecord);
   } catch (err) {
-    console.warn('saveStudentResultFirebase failed, saving to IndexedDB instead:', err);
+    console.warn('saveStudentResultFirebase failed:', err);
     return saveStudentResultIndexedDB(name, subject, userAnswers, score, total);
   }
 }
@@ -611,9 +492,9 @@ async function saveStudentResultFirebase(name, subject, userAnswers, score, tota
 async function getAllResultsFirebase() {
   try {
     const snapshot = await resultsCollection().get();
-    return snapshot.docs.map(doc => doc.data());
+    return snapshot.docs.map(doc => ({ _fbId: doc.id, ...doc.data() }));
   } catch (err) {
-    console.warn('getAllResultsFirebase failed, using IndexedDB:', err);
+    console.warn('getAllResultsFirebase failed:', err);
     return getAllResultsIndexedDB();
   }
 }
@@ -621,30 +502,45 @@ async function getAllResultsFirebase() {
 async function clearAllResultsFirebase() {
   try {
     const snapshot = await resultsCollection().get();
-    const batch = firebaseDb.batch();
-    snapshot.docs.forEach(doc => batch.delete(doc.ref));
-    await batch.commit();
+    if (snapshot.empty) return;
+    // Hapus dalam batch (maks 500)
+    const BATCH_SIZE = 400;
+    const docs = snapshot.docs;
+    for (let start = 0; start < docs.length; start += BATCH_SIZE) {
+      const batch = firebaseDb.batch();
+      docs.slice(start, start + BATCH_SIZE).forEach(doc => batch.delete(doc.ref));
+      await batch.commit();
+    }
   } catch (err) {
-    console.warn('clearAllResultsFirebase failed, falling back to IndexedDB:', err);
+    console.warn('clearAllResultsFirebase failed:', err);
     return clearAllResultsIndexedDB();
   }
 }
 
 async function getRankingDataFirebase(subject = null) {
-  let query = resultsCollection();
-  if (subject) query = query.where('subject', '==', subject);
-  const snapshot = await query.get();
-
-  const results = snapshot.docs.map(doc => doc.data());
-  results.sort((a, b) => b.score - a.score);
-
-  return results.map((result, index) => ({
-    rank: index + 1,
-    name: result.name,
-    subject: result.subject,
-    score: result.score,
-    total: result.total,
-    percentage: Math.round((result.score / 100) * 100),
-    timestamp: result.timestamp
-  }));
+  try {
+    let snapshot;
+    if (subject) {
+      snapshot = await resultsCollection().where('subject', '==', subject).get();
+    } else {
+      snapshot = await resultsCollection().get();
+    }
+    const results = snapshot.docs.map(doc => doc.data());
+    results.sort((a, b) => b.score - a.score);
+    return results.map((result, index) => ({
+      rank: index + 1,
+      name: result.name,
+      subject: result.subject,
+      score: result.score,
+      total: result.total,
+      percentage: Math.round((result.score / 100) * 100),
+      timestamp: result.timestamp
+    }));
+  } catch (err) {
+    console.warn('getRankingDataFirebase failed:', err);
+    return getRankingDataIndexedDB(subject);
+  }
 }
+
+// Jalankan init Firebase
+initFirebase();
