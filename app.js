@@ -34,7 +34,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let userAnswers = {};
   let markedQuestions = new Set();
   let timerInterval = null;
-  let timeRemaining = 90 * 60;
+  let timeRemaining = 45 * 60;
   let progressChartInstance = null;
   let ringChartInstance = null;
 
@@ -210,7 +210,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const ok = await renderExamQuestions(subject);
     if (ok) {
-      timeRemaining = 90 * 60;
+      timeRemaining = 45 * 60;
       startTimer();
       showQuestion(0);
     } else {
