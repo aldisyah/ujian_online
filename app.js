@@ -116,7 +116,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           card.innerHTML = `
             <div class="exam-info">
               <h4>${subj}</h4>
-              <p><i class="fa-solid fa-clock"></i> 90 Menit &nbsp;•&nbsp; <i class="fa-solid fa-file-lines"></i> Pilihan Ganda &amp; Esai</p>
+              <p><i class="fa-solid fa-clock"></i> 45 Menit &nbsp;•&nbsp; <i class="fa-solid fa-file-lines"></i> Pilihan Ganda &amp; Esai</p>
             </div>
             ${alreadyTaken
               ? `<button class="btn btn-outline" disabled>✅ Sudah Mengerjakan</button>`
