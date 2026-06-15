@@ -38,25 +38,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   let progressChartInstance = null;
   let ringChartInstance = null;
 
-  function saveDraft() {
-    if (!currentSubject) return;
-    const studentName = sessionStorage.getItem('studentName') || '';
-    if (!studentName) return;
-    const draftKey = `exam_draft_${studentName}_${currentSubject}`;
-    localStorage.setItem(draftKey, JSON.stringify({
-      answers: userAnswers,
-      timeRemaining: timeRemaining
-    }));
-  }
-
-  function clearDraft() {
-    if (!currentSubject) return;
-    const studentName = sessionStorage.getItem('studentName') || '';
-    if (!studentName) return;
-    const draftKey = `exam_draft_${studentName}_${currentSubject}`;
-    localStorage.removeItem(draftKey);
-  }
-
   // Tampilkan loading sementara menunggu Firebase siap
   function showLoading(msg) {
     examsGrid.innerHTML = `<p class="text-muted"><i class="fa-solid fa-spinner fa-spin"></i> ${msg}</p>`;
@@ -132,10 +113,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const alreadyTaken = studentResults.some(r =>
             (r.subject || '').toLowerCase() === (subj || '').toLowerCase()
           );
-          
-          const draftKey = `exam_draft_${name}_${subj}`;
-          const hasDraft = !!localStorage.getItem(draftKey);
-
           card.innerHTML = `
             <div class="exam-info">
               <h4>${subj}</h4>
@@ -143,9 +120,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             </div>
             ${alreadyTaken
               ? `<button class="btn btn-outline" disabled>✅ Sudah Mengerjakan</button>`
-              : (hasDraft
-                  ? `<button class="btn btn-warning start-exam-btn" style="background-color: #f39c12; border-color: #e67e22; color: white;" data-subject="${subj}">Lanjutkan Ujian</button>`
-                  : `<button class="btn btn-primary start-exam-btn" data-subject="${subj}">Mulai Kerjakan</button>`)
+              : `<button class="btn btn-primary start-exam-btn" data-subject="${subj}">Mulai Kerjakan</button>`
             }
           `;
           examsGrid.appendChild(card);
@@ -207,11 +182,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const btn = e.target.closest('.start-exam-btn');
     if (!btn) return;
     const subject = btn.getAttribute('data-subject');
-    const isLanjutkan = btn.textContent.includes('Lanjutkan');
-    const msg = isLanjutkan 
-      ? `Anda akan melanjutkan ujian: ${subject}.\nSiap?` 
-      : `Anda akan memulai ujian: ${subject}\nWaktu: 45 menit. Siap?`;
-    if (confirm(msg)) {
+    if (confirm(`Anda akan memulai ujian: ${subject}\nWaktu: 90 menit. Siap?`)) {
       await startExam(subject);
     }
   });
@@ -240,39 +211,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const ok = await renderExamQuestions(subject);
     if (ok) {
       timeRemaining = 45 * 60;
-      
-      // Load Draft if exists
-      const draftKey = `exam_draft_${studentName}_${subject}`;
-      const savedDraft = localStorage.getItem(draftKey);
-      if (savedDraft) {
-        try {
-          const parsed = JSON.parse(savedDraft);
-          if (parsed.answers) {
-            userAnswers = parsed.answers;
-            // Restore UI
-            Object.keys(userAnswers).forEach(key => {
-              const inputs = document.getElementsByName(key);
-              if (inputs.length > 0) {
-                if (inputs[0].type === 'radio') {
-                  inputs.forEach(radio => {
-                    if (radio.value === userAnswers[key]) {
-                      radio.checked = true;
-                      const label = radio.closest('.option-label');
-                      if (label) label.classList.add('selected');
-                    }
-                  });
-                } else if (inputs[0].tagName === 'TEXTAREA') {
-                  inputs[0].value = userAnswers[key];
-                }
-              }
-            });
-          }
-          if (parsed.timeRemaining) {
-            timeRemaining = parsed.timeRemaining;
-          }
-        } catch(e) { console.error('Error loading draft', e); }
-      }
-
       startTimer();
       showQuestion(0);
     } else {
@@ -285,20 +223,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   function startTimer() {
     const timerEl = $('#time-remaining');
     clearInterval(timerInterval);
-    updateTimerUI(timerEl);
     timerInterval = setInterval(() => {
       timeRemaining--;
       if (timeRemaining <= 0) { clearInterval(timerInterval); submitExam(true); return; }
-      updateTimerUI(timerEl);
-      if (timeRemaining % 5 === 0) saveDraft();
+      const h = Math.floor(timeRemaining / 3600).toString().padStart(2, '0');
+      const m = Math.floor((timeRemaining % 3600) / 60).toString().padStart(2, '0');
+      const s = (timeRemaining % 60).toString().padStart(2, '0');
+      timerEl.textContent = `${h}:${m}:${s}`;
     }, 1000);
-  }
-
-  function updateTimerUI(timerEl) {
-    const h = Math.floor(timeRemaining / 3600).toString().padStart(2, '0');
-    const m = Math.floor((timeRemaining % 3600) / 60).toString().padStart(2, '0');
-    const s = (timeRemaining % 60).toString().padStart(2, '0');
-    timerEl.textContent = `${h}:${m}:${s}`;
   }
 
   // 5. CBT Navigation
@@ -346,7 +278,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       e.target.closest('.option-label').classList.add('selected');
       markedQuestions.delete(name);
       updateGridUI();
-      saveDraft();
     }
   });
 
@@ -356,7 +287,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       userAnswers[name] = e.target.value.trim();
       if (userAnswers[name].length > 0) markedQuestions.delete(name);
       updateGridUI();
-      saveDraft();
     }
   });
 
@@ -489,8 +419,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       const studentName = sessionStorage.getItem('studentName') || 'Siswa';
 
       await saveStudentResult(studentName, currentSubject, userAnswers, score, totalQuestions);
-      
-      clearDraft();
 
       hide(examSection); show(globalNav); show(resultSection);
 
