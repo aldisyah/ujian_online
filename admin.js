@@ -480,6 +480,97 @@ document.addEventListener('DOMContentLoaded', () => {
   const filterRankingSubject = document.getElementById('filterRankingSubject');
   if (filterRankingSubject) filterRankingSubject.addEventListener('change', loadRankingTable);
 
+  const exportPdfRankingBtn = document.getElementById('exportPdfRankingBtn');
+  if (exportPdfRankingBtn) {
+    exportPdfRankingBtn.addEventListener('click', async () => {
+      try {
+        const selectedSubject = filterRankingSubject ? filterRankingSubject.value : '';
+        
+        exportPdfRankingBtn.disabled = true;
+        exportPdfRankingBtn.textContent = '⏳ Memproses...';
+
+        let allResults = await getAllResults();
+        if (selectedSubject) {
+          allResults = allResults.filter(r => r.subject === selectedSubject);
+        }
+        
+        if (allResults.length === 0) {
+          alert('Tidak ada data ranking untuk diekspor.');
+          exportPdfRankingBtn.disabled = false;
+          exportPdfRankingBtn.textContent = '⬇️ Ekspor PDF';
+          return;
+        }
+
+        const subjects = [...new Set(allResults.map(r => r.subject))];
+        const correctAnswersBySubject = {};
+        for (const subj of subjects) {
+          correctAnswersBySubject[subj] = await getCorrectAnswers(subj);
+        }
+
+        const dataRows = allResults.map(res => {
+          const correctAns = correctAnswersBySubject[res.subject] || {};
+          let correctCount = 0;
+          let emptyCount = 0;
+          const userAns = res.answers || {};
+          
+          for (let i = 0; i < res.total; i++) {
+             const key = `q${i}`;
+             const uA = (userAns[key] || '').trim().toLowerCase();
+             const cA = (correctAns[key] || '').trim().toLowerCase();
+             if (!uA) emptyCount++;
+             else if (cA && cA === uA) correctCount++;
+          }
+
+          return {
+            ...res,
+            correctCount,
+            wrongCount: res.total - correctCount
+          };
+        });
+
+        dataRows.sort((a, b) => b.score - a.score);
+
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF();
+
+        const tableBody = dataRows.map((r, index) => {
+          const [date, ...timeArr] = r.timestamp.replace(',', '').split(' ');
+          const time = timeArr.join(' ');
+          return [
+            index + 1,
+            r.name,
+            r.score,
+            date,
+            time,
+            r.correctCount,
+            r.wrongCount
+          ];
+        });
+
+        const title = selectedSubject ? `Ranking Siswa - ${selectedSubject}` : 'Ranking Siswa - Semua Mapel';
+        
+        doc.text(title, 14, 15);
+        
+        doc.autoTable({
+          startY: 20,
+          head: [['No', 'Nama', 'Nilai', 'Tanggal', 'Waktu', 'Benar', 'Salah']],
+          body: tableBody,
+        });
+
+        const safeSubject = (selectedSubject || 'Semua').replace(/\\s+/g, '_');
+        doc.save(`Ranking_Siswa_${safeSubject}_${new Date().toISOString().slice(0, 10)}.pdf`);
+        
+        exportPdfRankingBtn.disabled = false;
+        exportPdfRankingBtn.textContent = '⬇️ Ekspor PDF';
+      } catch (error) {
+        console.error('Error exporting PDF:', error);
+        alert('Terjadi kesalahan saat mengekspor PDF.');
+        exportPdfRankingBtn.disabled = false;
+        exportPdfRankingBtn.textContent = '⬇️ Ekspor PDF';
+      }
+    });
+  }
+
   if (fileInput) {
     fileInput.addEventListener('change', () => {
       const file = fileInput.files[0];

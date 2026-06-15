@@ -12,6 +12,8 @@
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js" defer></script>
   <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js" defer></script>
   <script src="https://unpkg.com/mammoth@1.4.2/mammoth.browser.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
   <script src="auth.js" defer></script>
   <script src="db.js" defer></script>
   <script src="admin.js" defer></script>
@@ -162,6 +164,7 @@
               <select id="filterRankingSubject" class="form-select form-select-sm">
                 <option value="">-- Semua Mapel --</option>
               </select>
+              <button id="exportPdfRankingBtn" class="btn btn-light btn-sm">⬇️ Ekspor PDF</button>
             </div>
           </div>
           <div class="card-body p-0">
