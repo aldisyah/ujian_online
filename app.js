@@ -43,6 +43,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     examsGrid.innerHTML = `<p class="text-muted"><i class="fa-solid fa-spinner fa-spin"></i> ${msg}</p>`;
   }
 
+  async function checkAndResumeOrLoadDashboard(name) {
+    const activeStateStr = localStorage.getItem(`activeExam_${name}`);
+    if (activeStateStr) {
+      try {
+        const state = JSON.parse(activeStateStr);
+        await resumeExam(state.subject, state);
+      } catch (e) {
+        console.error('Failed to parse active exam state', e);
+        loadDashboard(name);
+      }
+    } else {
+      loadDashboard(name);
+    }
+  }
+
   // 1. Initialize: tunggu Firebase ready sebelum render dashboard
   const savedName = sessionStorage.getItem('studentName');
   if (savedName) {
@@ -53,7 +68,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     showLoading('Menghubungkan ke server...');
     // waitForFirebase didefinisikan di db.js
     await waitForFirebase();
-    loadDashboard(savedName);
+    checkAndResumeOrLoadDashboard(savedName);
   } else {
     show(nameSection);
   }
@@ -68,7 +83,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     show(dashboardSection);
     showLoading('Menghubungkan ke server...');
     await waitForFirebase();
-    loadDashboard(name);
+    checkAndResumeOrLoadDashboard(name);
   });
 
   // Enter key di input nama
@@ -213,10 +228,71 @@ document.addEventListener('DOMContentLoaded', async () => {
       timeRemaining = 45 * 60;
       startTimer();
       showQuestion(0);
+      saveExamState();
     } else {
       alert('Gagal memuat soal untuk mata pelajaran ini. Silakan hubungi admin.');
       hide(examSection);
       show(globalNav); show(dashboardSection);
+    }
+  }
+
+  function saveExamState() {
+    const studentName = sessionStorage.getItem('studentName') || '';
+    if (!studentName || !currentSubject) return;
+    const state = {
+      subject: currentSubject,
+      timeRemaining,
+      userAnswers,
+      markedQuestions: Array.from(markedQuestions),
+      currentQuestionIndex
+    };
+    localStorage.setItem(`activeExam_${studentName}`, JSON.stringify(state));
+  }
+
+  function clearExamState() {
+    const studentName = sessionStorage.getItem('studentName') || '';
+    localStorage.removeItem(`activeExam_${studentName}`);
+  }
+
+  async function resumeExam(subject, state) {
+    currentSubject = subject;
+    cbtSubjectName.textContent = subject;
+
+    hide(globalNav); hide(dashboardSection);
+    examForm.innerHTML = '<p style="text-align:center;padding:2rem"><i class="fa-solid fa-spinner fa-spin"></i> Melanjutkan ujian...</p>';
+    show(examSection);
+
+    const ok = await renderExamQuestions(subject);
+    if (ok) {
+      timeRemaining = state.timeRemaining || (45 * 60);
+      userAnswers = state.userAnswers || {};
+      markedQuestions = new Set(state.markedQuestions || []);
+      
+      // Restore checked DOM states for rendering
+      Object.keys(userAnswers).forEach(qName => {
+        const val = userAnswers[qName];
+        const input = document.querySelector(`[name="${qName}"]`);
+        if (input) {
+          if (input.type === 'radio') {
+            const radioToSelect = document.querySelector(`input[name="${qName}"][value="${val}"]`);
+            if (radioToSelect) {
+              radioToSelect.checked = true;
+              radioToSelect.closest('.option-label').classList.add('selected');
+            }
+          } else if (input.tagName === 'TEXTAREA') {
+            input.value = val;
+          }
+        }
+      });
+
+      startTimer();
+      showQuestion(state.currentQuestionIndex || 0);
+    } else {
+      alert('Gagal memuat soal untuk melanjutkan ujian.');
+      clearExamState();
+      hide(examSection);
+      show(globalNav); show(dashboardSection);
+      loadDashboard(sessionStorage.getItem('studentName'));
     }
   }
 
@@ -230,6 +306,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const m = Math.floor((timeRemaining % 3600) / 60).toString().padStart(2, '0');
       const s = (timeRemaining % 60).toString().padStart(2, '0');
       timerEl.textContent = `${h}:${m}:${s}`;
+      saveExamState();
     }, 1000);
   }
 
@@ -244,6 +321,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (markedQuestions.has(qId)) markedQuestions.delete(qId);
     else markedQuestions.add(qId);
     updateGridUI();
+    saveExamState();
   });
 
   function showQuestion(index) {
@@ -256,6 +334,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnPrev.disabled = index === 0;
     if (index === questionsData.length - 1) { hide(btnNext); show(submitBtn); }
     else { show(btnNext); hide(submitBtn); }
+    saveExamState();
   }
 
   function updateGridUI() {
@@ -278,6 +357,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       e.target.closest('.option-label').classList.add('selected');
       markedQuestions.delete(name);
       updateGridUI();
+      saveExamState();
     }
   });
 
@@ -287,6 +367,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       userAnswers[name] = e.target.value.trim();
       if (userAnswers[name].length > 0) markedQuestions.delete(name);
       updateGridUI();
+      saveExamState();
     }
   });
 
@@ -419,6 +500,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const studentName = sessionStorage.getItem('studentName') || 'Siswa';
 
       await saveStudentResult(studentName, currentSubject, userAnswers, score, totalQuestions);
+      clearExamState();
 
       hide(examSection); show(globalNav); show(resultSection);
 
